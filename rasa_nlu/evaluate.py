@@ -173,7 +173,7 @@ def remove_empty_intent_examples(intent_results):
         # substitute None values with empty string
         # to enable sklearn evaluation
         if r.prediction is None:
-            r.prediction = ""
+            r = r._replace(prediction="")
 
         if r.target != "" and r.target is not None:
             filtered.append(r)
@@ -603,7 +603,7 @@ def remove_duckling_entities(entity_predictions):
 
 
 def run_evaluation(data_path, model_path,
-                   errors_filename=None,
+                   errors_filename='errors.json',
                    confmat_filename=None,
                    intent_hist_filename=None,
                    component_builder=None):  # pragma: no cover
