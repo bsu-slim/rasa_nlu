@@ -10,6 +10,14 @@ from rasa_nlu.components import Component
 from rasa_nlu import utils
 import os
 
+from rasa_nlu.classifiers import INTENT_RANKING_LENGTH
+from rasa_nlu.components import Component
+from rasa_nlu.config import RasaNLUModelConfig
+from rasa_nlu.model import Metadata
+from rasa_nlu.training_data import Message
+from rasa_nlu.training_data import TrainingData
+from rasa_nlu.tokenizers import Tokenizer, Token
+
 
 class RASA_SIUM(Component):
     """A new component"""
@@ -25,7 +33,7 @@ class RASA_SIUM(Component):
     # should be set by the component on the message object
     # during test and train, e.g.
     # ```message.set("entities", [...])```
-    provides = ["intents", "entities"]
+    provides = ["intent", "intent_ranking", "entities", "tokens"]
 
     # Which attributes on a message are required by this
     # component. e.g. if requires contains "tokens", than a
@@ -71,7 +79,6 @@ class RASA_SIUM(Component):
         on any context attributes created by a call to
         :meth:`components.Component.train`
         of components previous to this one."""
-        print("!!!!!!!!!!!")
         for e in training_data.intent_examples:
             example = e.as_dict()
             intent = example['intent']
@@ -84,10 +91,14 @@ class RASA_SIUM(Component):
                 if intent not in self.context:
                     self.context[intent] = {}
                 self.context[intent][prop] = prop
-        print("!!!!!!!!!!!!!!")
         self.sium.train()
 
-    
+    # here, we do the main processing in terms of evaluation
+    # this will return intents, intent_rankings, entities, and
+    # tokens in the message set. Tokenization is neccessary for 
+    # entity extraction in rasa, and we had to use our own in order
+    # to keep our incremental framework possible. We use an extremely
+    # simple whitespace tokenizer 
     def process(self, message, **kwargs):
         """Process an incoming message.
 
@@ -101,13 +112,42 @@ class RASA_SIUM(Component):
         of components previous to this one."""
         self.sium.new_utt()
         self.sium.set_context(self.context)
-        print(message.text)
+        extracted_entities = [] 
+        #for the tokenizer required for entity
+        #extraction
+        word_offset = 0
+        tokens = []
         for word in message.text.lower().split():
+            tokens.append(Token(word, word_offset))
             props,prop_dist = self.sium.add_word_increment({'word':word})
-        print(self.sium.get_current_prediction_state())
-        for p in props:
-            print(p, prop_dist.prob(p))
-        
+            for p in props: 
+                #todo: multiple-word entities, and threshold adjustments.
+                #had to add the tokenizers for this reason
+                if prop_dist.prob(p) > 0.5: 
+                    extracted_entities.append({'start': word_offset, 'end': word_offset+len(word)-1,
+                        'value': word, 'entity': p, 'confidence':prop_dist.prob(p), 'extractor': 'sium'}) 
+            word_offset+=len(word)            
+                    
+        pred_intent, intent_ranks = self.get_intents_and_ranks()
+        message.set("intent", pred_intent, add_to_output=True)
+        message.set("intent_ranking", intent_ranks, add_to_output=True)
+        message.set("tokens", tokens)
+        message.set("entities", message.get("entities", []) + extracted_entities,
+                    add_to_output=True)
+
+    def get_intents_and_ranks(self):
+        #get the current prediction state and the sum of all the intent rankings
+        #this is needed to normalize the confidence values.
+        intents_maxent_prob = self.sium.get_current_prediction_state()
+        intent_ranking_sum = sum(intents_maxent_prob.values())
+        #predict our intent, and calculate the normalized confidence score for it
+        pred_intent = {"name": self.sium.get_predicted_intent()[0], 
+            "confidence": intents_maxent_prob[self.sium.get_predicted_intent()[0]]/intent_ranking_sum}
+        #rank the rest of the intents in terms of confidence.
+        norm_intent_ranking = [{"name": intent,
+                                   "confidence": intents_maxent_prob[intent]/intent_ranking_sum}
+                                  for intent in intents_maxent_prob]  
+        return pred_intent, norm_intent_ranking      
 
     @classmethod
     def load(cls,
