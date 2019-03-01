@@ -197,7 +197,7 @@ class Trainer(object):
             logger.info("Finished training component.")
             if updates:
                 context.update(updates)
-
+                
         return Interpreter(self.pipeline, context)
 
     def persist(self, path, persistor=None, project_name=None,
@@ -358,5 +358,138 @@ class Interpreter(object):
 
         output = self.default_output_attributes()
         output.update(message.as_dict(
+                only_output_properties=only_output_properties))
+        return output
+
+# Programmatically with an explicitly listed incremental component.
+# Further documentation needed (TODO)
+
+
+class Incremental_Interpreter(Interpreter):
+
+    # must override load and create to return Incremental_Interpreter
+    # rather than Interpreter
+    @staticmethod
+    def load(model_dir, component_builder=None, skip_validation=False):
+        """Create an interpreter based on a persisted model.
+
+        Args:
+            model_dir (str): The path of the model to load
+            component_builder (ComponentBuilder): The
+                :class:`ComponentBuilder` to use.
+
+        Returns:
+            Interpreter: An interpreter that uses the loaded model.
+        """
+
+        model_metadata = Metadata.load(model_dir)
+
+        Incremental_Interpreter.ensure_model_compatibility(model_metadata)
+        return Incremental_Interpreter.create(model_metadata,
+                                  component_builder,
+                                  skip_validation)
+
+    @staticmethod
+    def create(model_metadata,  # type: Metadata
+               component_builder=None,  # type: Optional[ComponentBuilder]
+               skip_validation=False  # type: bool
+               ):
+        # type: (...) -> Interpreter
+        """Load stored model and components defined by the provided metadata."""
+
+        context = {}
+
+        if component_builder is None:
+            # If no builder is passed, every interpreter creation will result
+            # in a new builder. hence, no components are reused.
+            component_builder = components.ComponentBuilder()
+
+        pipeline = []
+
+        # Before instantiating the component classes,
+        # lets check if all required packages are available
+        if not skip_validation:
+            components.validate_requirements(model_metadata.component_classes)
+
+        for component_name in model_metadata.component_classes:
+            component = component_builder.load_component(
+                    component_name, model_metadata.model_dir,
+                    model_metadata, **context)
+            try:
+                updates = component.provide_context()
+                if updates:
+                    context.update(updates)
+                pipeline.append(component)
+            except components.MissingArgumentError as e:
+                raise Exception("Failed to initialize component '{}'. "
+                                "{}".format(component.name, e))
+
+        return Incremental_Interpreter(pipeline, context, model_metadata)
+
+    # overriding the init function to make message a variable contained in self
+    # so that it can be preserved across multiple incremental_parse calls, initialize
+    # in init, and get modified until it is eventually cleared in new_utterance
+    def __init__(self, pipeline, context, model_metadata=None):
+        super().__init__(pipeline, context, model_metadata)
+        self.message = Message(text="")
+
+    # call this function when creating up a new utterance
+    # this will tell the incremental components to clear their
+    # internal states and start clean
+    def new_utterance(self):
+        for component in self.pipeline:
+            component.new_utterance()
+        self.message = Message(text="")
+
+    def revoke_word(self):
+        prev_iu = self.message.get('incr_edit_message')
+        prev_iu = prev_iu[len(prev_iu)-1]
+        revoke_iu = (prev_iu[0], "revoke")
+        self.message.get('incr_edit_message').append(revoke_iu)
+        for component in self.pipeline:
+            component.process(self.message, **self.context)
+        return prev_iu
+
+    # here, parse will be preserved but be breaking up the text into individual
+    # words, then fed into the incremental component. This way, cmd-line evaluation 
+    # can be preserved without many changes, and we can still evaluate an incremental
+    # component from cmd-line.
+    # TODO: for now, this will just call parse_incremental because we haven't 
+    # fully implemented that method for a real ASR yet.
+    def parse(self, text, time=None, only_output_properties=True):
+        self.new_utterance()
+        return self.parse_incremental(text, time, only_output_properties)
+
+    # new_utterance should be called before each new utterance, and that component
+    # will be responsible for clearing its internal state. However, the message
+    # is responsible for clearing/restarting the message object
+    def parse_incremental(self, text, time=None, only_output_properties=True):
+
+        if not text:
+            # Not all components are able to handle empty strings. So we need
+            # to prevent that... This default return will not contain all
+            # output attributes of all components, but in the end, no one
+            # should pass an empty string in the first place.
+            output = self.default_output_attributes()
+            output["text"] = ""
+            return output
+
+        # for each new word coming in, we will call process on our component, however
+        # since we are 'faking' it for now, we are still taking in the whole utterance
+        # and splitting it here
+        for word in text.split():
+            if(self.message.get('incr_edit_message') is None):
+                self.message.set('incr_edit_message', list())
+
+            self.message.get('incr_edit_message').append((word, "add"))
+
+            for component in self.pipeline:
+                component.process(self.message, **self.context)
+                # print('!!!!!')
+                # print('incr_edit_message: ', self.message.get('incr_edit_message'))
+                # print('intent: ', self.message.get('intent'))
+                # print('entities: ', self.message.get('entities'))
+        output = self.default_output_attributes()
+        output.update(self.message.as_dict(
                 only_output_properties=only_output_properties))
         return output

@@ -352,6 +352,9 @@ class Component(object):
 
         return language in cls.language_list
 
+class Incremental_Component(Component):
+    def new_utterance(self):
+        pass
 
 class ComponentBuilder(object):
     """Creates trainers and interpreters based on configurations.
@@ -410,7 +413,7 @@ class ComponentBuilder(object):
         """
         from rasa_nlu import registry
         from rasa_nlu.model import Metadata
-
+ 
         try:
             cached_component, cache_key = self.__get_cached_component(
                     component_name, model_metadata)
