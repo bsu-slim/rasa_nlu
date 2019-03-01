@@ -11,7 +11,7 @@ from rasa_nlu import utils
 import os
 
 from rasa_nlu.classifiers import INTENT_RANKING_LENGTH
-from rasa_nlu.components import Component
+from rasa_nlu.components import Incremental_Component
 from rasa_nlu.config import RasaNLUModelConfig
 from rasa_nlu.model import Metadata
 from rasa_nlu.training_data import Message
@@ -19,7 +19,7 @@ from rasa_nlu.training_data import TrainingData
 from rasa_nlu.tokenizers import Tokenizer, Token
 
 
-class RASA_SIUM(Component):
+class RASA_SIUM(Incremental_Component):
     """A new component"""
 
     # Name of the component to be used when integrating it in a
@@ -40,7 +40,7 @@ class RASA_SIUM(Component):
     # previous component in the pipeline needs to have "tokens"
     # within the above described `provides` property.
 
-    #need to talk to Dr.k about what it requires
+    # need to talk to Dr.k about what it requires
     requires = []
 
     # Defines the default configuration parameters of a component
@@ -53,20 +53,20 @@ class RASA_SIUM(Component):
     # This attribute is designed for instance method: `can_handle_language`.
     # Default value is None which means it can handle all languages.
     # This is an important feature for backwards compatibility of components.
-    #TODO: is SIUM language specific?
     language_list = None
 
-    
-    #don't run unless these packages are installed on machine
+    # don't run unless these packages are installed on machine
     @classmethod
     def required_packages(cls):
         return ["nltk", "pickle"]
 
     def __init__(self, component_config=None):
-        self.sium = SIUM('rasa-sium')
+        self.sium = SIUM("rasa-sium")
         self.context = {}
-        self.component_config=component_config
-
+        self.tokens = []
+        self.extracted_entities = []
+        self.word_offset = 0
+        self.component_config = component_config
 
     def train(self, training_data, cfg, **kwargs):
         """Train this component.
@@ -81,17 +81,24 @@ class RASA_SIUM(Component):
         of components previous to this one."""
         for e in training_data.intent_examples:
             example = e.as_dict()
-            intent = example['intent']
-            entities = example['entities']
+            intent = example["intent"]
+            entities = example["entities"]
             for ent in entities:
-                word = ent['value'].lower()
-                prop = ent['entity']
+                word = ent["value"].lower()
+                prop = ent["entity"]
                 for w in word.split():
-                    self.sium.add_word_to_property(prop, {'word':w})
+                    self.sium.add_word_to_property(prop, {"word": w})
                 if intent not in self.context:
                     self.context[intent] = {}
                 self.context[intent][prop] = prop
         self.sium.train()
+
+    # clears the internal state
+    def new_utterance(self):
+        self.sium.new_utt()
+        self.extracted_entities = []
+        self.tokens = []
+        self.word_offset = 0
 
     # here, we do the main processing in terms of evaluation
     # this will return intents, intent_rankings, entities, and
@@ -110,42 +117,57 @@ class RASA_SIUM(Component):
         on any context attributes created by a call to
         :meth:`components.Component.process`
         of components previous to this one."""
-        self.sium.new_utt()
+        
+        # does this need to be here every call?
         self.sium.set_context(self.context)
-        extracted_entities = [] 
-        #for the tokenizer required for entity
-        #extraction
-        word_offset = 0
-        tokens = []
-        for word in message.text.lower().split():
-            tokens.append(Token(word, word_offset))
-            props,prop_dist = self.sium.add_word_increment({'word':word})
-            for p in props: 
-                #todo: multiple-word entities, and threshold adjustments.
-                #had to add the tokenizers for this reason
-                if prop_dist.prob(p) > 0.5: 
-                    extracted_entities.append({'start': word_offset, 'end': word_offset+len(word)-1,
-                        'value': word, 'entity': p, 'confidence':prop_dist.prob(p), 'extractor': 'sium'}) 
-            word_offset+=len(word)            
-                    
-        pred_intent, intent_ranks = self.get_intents_and_ranks()
-        message.set("intent", pred_intent, add_to_output=True)
-        message.set("intent_ranking", intent_ranks, add_to_output=True)
-        message.set("tokens", tokens)
-        message.set("entities", message.get("entities", []) + extracted_entities,
-                    add_to_output=True)
+        
+        # latest IU is being appended to "incr_edit_message", so grab last one out of that
+        inc_edit_message = message.get("incr_edit_message")
+        # latest IU being added, for now, assume all add
+        new_iu = inc_edit_message[-1]
 
-    def get_intents_and_ranks(self):
-        #get the current prediction state and the sum of all the intent rankings
-        #this is needed to normalize the confidence values.
+        iu_word, iu_type = new_iu
+        if iu_type is "add":
+            self.tokens.append(Token(iu_word, self.word_offset))
+            props, prop_dist = self.sium.add_word_increment({"word": iu_word})
+            for p in props:
+                # todo: multi-word entities, threshold adjustments
+                if prop_dist.prob(p) > 0.5:
+                    self.extracted_entities.append({'start': self.word_offset, 
+                        'end': self.word_offset+len(iu_word)-1, 'value': 
+                        iu_word, 'entity': p, 'confidence': prop_dist.prob(p), 
+                        'extractor': 'sium'})
+            self.word_offset += len(iu_word)
+        elif iu_type is "revoke":
+            # need to undo everythin above, remove tokens, revoke word, remove extracted entities, subtract word_offset
+            # correct word_offset since we are removing this word
+            self.word_offset -= len(iu_word)
+            # remove our token with that word from our list of tokens
+            self.tokens.pop()
+            # this is a bit more difficult, basically, if we have 
+            # our word show up in any extracted entities, then we
+            # need to remove that entity from our list of entities
+            last_entity = self.extracted_entities[-1]
+            if iu_word in last_entity.values():
+                self.extracted_entities.pop()
+            self.sium.revoke()
+        pred_intent, intent_ranks = self.__get_intents_and_ranks()
+        message.set("intent", pred_intent, add_to_output=True)
+        message.set("intent_ranking", intent_ranks)
+        message.set("tokens", self.tokens)
+        message.set("entities", self.extracted_entities, add_to_output=True)
+
+    def __get_intents_and_ranks(self):
+        # get the current prediction state and the sum of all the intent rankings
+        # this is needed to normalize the confidence values.
         intents_maxent_prob = self.sium.get_current_prediction_state()
         intent_ranking_sum = sum(intents_maxent_prob.values())
-        #predict our intent, and calculate the normalized confidence score for it
-        pred_intent = {"name": self.sium.get_predicted_intent()[0], 
-            "confidence": intents_maxent_prob[self.sium.get_predicted_intent()[0]]/intent_ranking_sum}
-        #rank the rest of the intents in terms of confidence.
-        norm_intent_ranking = [{"name": intent,
-                                   "confidence": intents_maxent_prob[intent]/intent_ranking_sum}
+        # predict our intent, and calculate the normalized confidence score for it
+        pred_intent = {'name': self.sium.get_predicted_intent()[0], 
+            'confidence': intents_maxent_prob[self.sium.get_predicted_intent()[0]]/intent_ranking_sum}
+        # rank the rest of the intents in terms of confidence.
+        norm_intent_ranking = [{'name': intent,
+                                   'confidence': intents_maxent_prob[intent]/intent_ranking_sum}
                                   for intent in intents_maxent_prob]  
         return pred_intent, norm_intent_ranking      
 
@@ -173,4 +195,4 @@ class RASA_SIUM(Component):
 
         classifier_file = os.path.join(model_dir, 'sium')
         utils.pycloud_pickle(classifier_file, self)
-        return {"classifier_file": 'sium'}
+        return {'classifier_file': 'sium'}
