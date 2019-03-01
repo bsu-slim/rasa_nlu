@@ -15,7 +15,7 @@ import json
 
 from rasa_nlu import training_data, utils, config
 from rasa_nlu.config import RasaNLUModelConfig
-from rasa_nlu.model import Interpreter
+from rasa_nlu.model import Interpreter, Incremental_Interpreter
 from rasa_nlu.model import Trainer, TrainingData
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,13 @@ def create_argument_parser():
 
     parser.add_argument('--confmat', required=False, default="confmat.png",
                         help="output path for the confusion matrix plot")
+
+    parser.add_argument('--incremental',
+                        action='store_true',
+                        help='If using an incremental component, this flag '
+                            'will instantiate an incremental parser for the component. '
+                            'This requires components in the pipeline inherit the incremental_'
+                            'component class')
 
     utils.add_logging_option_arguments(parser, default=logging.INFO)
 
@@ -606,11 +613,17 @@ def run_evaluation(data_path, model_path,
                    errors_filename='errors.json',
                    confmat_filename=None,
                    intent_hist_filename=None,
-                   component_builder=None):  # pragma: no cover
+                   component_builder=None,
+                   incremental=False):  # pragma: no cover
     """Evaluate intent classification and entity extraction."""
 
+    #create the correct type of interpreter
+    if incremental is False:
+        interpreter = Interpreter.load(model_path, component_builder)
+    else:
+        interpreter = Incremental_Interpreter.load(model_path, component_builder)
+    
     # get the metadata config from the package data
-    interpreter = Interpreter.load(model_path, component_builder)
     test_data = training_data.load_data(data_path,
                                         interpreter.model_metadata.language)
     extractors = get_entity_extractors(interpreter)
@@ -800,7 +813,7 @@ def main():
     parser = create_argument_parser()
     cmdline_args = parser.parse_args()
     utils.configure_colored_logging(cmdline_args.loglevel)
-
+    # TODO: incremental for crossvalidation?
     if cmdline_args.mode == "crossvalidation":
 
         # TODO: move parsing into sub parser
@@ -834,7 +847,8 @@ def main():
                        cmdline_args.model,
                        cmdline_args.errors,
                        cmdline_args.confmat,
-                       cmdline_args.histogram)
+                       cmdline_args.histogram,
+                       incremental=cmdline_args.incremental)
 
     logger.info("Finished evaluation")
 
