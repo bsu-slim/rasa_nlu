@@ -8,6 +8,10 @@ import datetime
 import logging
 import os
 
+# for revoke testing
+# todo: remove this as cleanup after asr inputs
+import random
+
 from builtins import object
 from typing import Any
 from typing import Dict
@@ -443,11 +447,12 @@ class Incremental_Interpreter(Interpreter):
 
     def revoke_word(self):
         prev_iu = self.message.get('incr_edit_message')
-        prev_iu = prev_iu[len(prev_iu)-1]
-        revoke_iu = (prev_iu[0], "revoke")
-        self.message.get('incr_edit_message').append(revoke_iu)
-        for component in self.pipeline:
-            component.process(self.message, **self.context)
+        if prev_iu:
+            prev_iu = prev_iu[-1]
+            revoke_iu = (prev_iu[0], "revoke")
+            self.message.get('incr_edit_message').append(revoke_iu)
+            for component in self.pipeline:
+                component.process(self.message, **self.context)
         return prev_iu
 
     # here, parse will be preserved but be breaking up the text into individual
@@ -465,6 +470,8 @@ class Incremental_Interpreter(Interpreter):
     # is responsible for clearing/restarting the message object
     def parse_incremental(self, text, time=None, only_output_properties=True):
 
+        random_revoke_words = ["restaurant", "playlist", "sandwich", "poster", "song", "forty", "picture", "frame"]
+
         if not text:
             # Not all components are able to handle empty strings. So we need
             # to prevent that... This default return will not contain all
@@ -481,14 +488,21 @@ class Incremental_Interpreter(Interpreter):
             if(self.message.get('incr_edit_message') is None):
                 self.message.set('incr_edit_message', list())
 
+            # proof of concept testing of revokes
+            if random.random() < 0.3 and len(self.message.get('incr_edit_message')) > 1:
+                # add random word from list
+                # print("Before adding incorrect word: ", self.message.as_dict())
+                self.message.get('incr_edit_message').append((random.choice(random_revoke_words), "add"))
+                for component in self.pipeline:
+                    component.process(self.message, **self.context)
+                # print("After adding incorrect word: ", self.message.as_dict())                
+                revoked = self.revoke_word()
+                # print("After revoking incorrect word: ", self.message.as_dict())                
+
             self.message.get('incr_edit_message').append((word, "add"))
 
             for component in self.pipeline:
                 component.process(self.message, **self.context)
-                # print('!!!!!')
-                # print('incr_edit_message: ', self.message.get('incr_edit_message'))
-                # print('intent: ', self.message.get('intent'))
-                # print('entities: ', self.message.get('entities'))
         output = self.default_output_attributes()
         output.update(self.message.as_dict(
                 only_output_properties=only_output_properties))

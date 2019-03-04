@@ -147,9 +147,10 @@ class RASA_SIUM(Incremental_Component):
             # this is a bit more difficult, basically, if we have 
             # our word show up in any extracted entities, then we
             # need to remove that entity from our list of entities
-            last_entity = self.extracted_entities[-1]
-            if iu_word in last_entity.values():
-                self.extracted_entities.pop()
+            if self.extracted_entities:
+                last_entity = self.extracted_entities[-1]
+                if iu_word in last_entity.values():
+                    self.extracted_entities.pop()
             self.sium.revoke()
         pred_intent, intent_ranks = self.__get_intents_and_ranks()
         message.set("intent", pred_intent, add_to_output=True)

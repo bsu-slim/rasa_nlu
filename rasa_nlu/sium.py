@@ -6,7 +6,6 @@ Created on Aug 21, 2018
 from nltk import MaxentClassifier
 import pickle
 from operator import itemgetter
-import copy
 
 
 class SIUM:
@@ -46,11 +45,9 @@ class SIUM:
 
     def add_word_increment(self, feats):
         # SIUM: sum_{r /in R} P(R=r|U) P(R=r|I)
-        
         self.previous_states.append({
-            "current_utt": copy.deepcopy(self.current_utt),
-            "model": copy.deepcopy(self.model),
-            "context": copy.deepcopy(self.context)
+            "current_utt": self.current_utt.copy(),
+            "context": self.context.copy()
         })
 
         # get P(R|U)
@@ -87,7 +84,6 @@ class SIUM:
         else:
             prev_state = self.previous_states.pop()
             self.current_utt = prev_state['current_utt']
-            self.model = prev_state['model']
             self.context = prev_state['context']     
         
     def get_current_prediction_state(self):
