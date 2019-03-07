@@ -179,13 +179,13 @@ class RASA_SIUM(Incremental_Component):
         confidence = intents_maxent_prob[curr_pred_intent] / int_rank_sum
         pred_intent = {
             'name': curr_pred_intent,
-            'confidence': conf
+            'confidence': confidence
         }
         # Rank and normalize the rest of the intents in terms of confidence.
         norm_rank = [{'name': intent,
                       'confidence': intents_maxent_prob[intent] / int_rank_sum}
                      for intent in intents_maxent_prob]
-        return pred_intent, norm_intent_ranking
+        return pred_intent, norm_rank
 
     @classmethod
     def load(cls,
