@@ -39,8 +39,6 @@ class RASA_SIUM(Incremental_Component):
     # component. e.g. if requires contains "tokens", than a
     # previous component in the pipeline needs to have "tokens"
     # within the above described `provides` property.
-
-    # need to talk to Dr.k about what it requires
     requires = []
 
     # Defines the default configuration parameters of a component
@@ -100,12 +98,12 @@ class RASA_SIUM(Incremental_Component):
         self.tokens = []
         self.word_offset = 0
 
-    # here, we do the main processing in terms of evaluation
+    # Here, we do the main processing in terms of evaluation
     # this will return intents, intent_rankings, entities, and
-    # tokens in the message set. Tokenization is neccessary for 
+    # tokens in the message set. Tokenization is neccessary for
     # entity extraction in rasa, and we had to use our own in order
     # to keep our incremental framework possible. We use an extremely
-    # simple whitespace tokenizer 
+    # simple whitespace tokenizer.
     def process(self, message, **kwargs):
         """Process an incoming message.
 
@@ -117,36 +115,45 @@ class RASA_SIUM(Incremental_Component):
         on any context attributes created by a call to
         :meth:`components.Component.process`
         of components previous to this one."""
-        
-        # does this need to be here every call?
-        self.sium.set_context(self.context)
-        
-        # latest IU is being appended to "incr_edit_message", so grab last one out of that
-        inc_edit_message = message.get("incr_edit_message")
-        # latest IU being added, for now, assume all add
-        new_iu = inc_edit_message[-1]
 
+        self.sium.set_context(self.context)
+
+        # The Latest IU is being appended to
+        # "incr_edit_message" in the message,
+        # so we grab last one out of that.
+        inc_edit_message = message.get("incr_edit_message")
+        new_iu = inc_edit_message[-1]
+        # Extract into tuple of (word, type)
+        # where type is either an "add" or "revoke".
         iu_word, iu_type = new_iu
+        # If it's an add, we have to update our intents
+        # and extract any entities if they meet our threshold.
+        # We also have to keep track of our word offset for
+        # the entities message.
         if iu_type is "add":
             self.tokens.append(Token(iu_word, self.word_offset))
             props, prop_dist = self.sium.add_word_increment({"word": iu_word})
             for p in props:
-                # todo: multi-word entities, threshold adjustments
+                # if we have a confidence of 0.5, then
+                # add that entity
                 if prop_dist.prob(p) > 0.5:
-                    self.extracted_entities.append({'start': self.word_offset, 
-                        'end': self.word_offset+len(iu_word)-1, 'value': 
-                        iu_word, 'entity': p, 'confidence': prop_dist.prob(p), 
-                        'extractor': 'sium'})
+                    self.extracted_entities.append({
+                        'start': self.word_offset,
+                        'end': self.word_offset+len(iu_word)-1,
+                        'value': iu_word, 'entity': p,
+                        'confidence': prop_dist.prob(p),
+                        'extractor': 'sium'
+                    })
             self.word_offset += len(iu_word)
         elif iu_type is "revoke":
-            # need to undo everythin above, remove tokens, revoke word, remove extracted entities, subtract word_offset
-            # correct word_offset since we are removing this word
+            # Need to undo everything above, remove tokens,
+            # revoke word, remove extracted entities, subtract word_offset.
             self.word_offset -= len(iu_word)
-            # remove our token with that word from our list of tokens
+            # Remove our latest token from our list.
             self.tokens.pop()
-            # this is a bit more difficult, basically, if we have 
+            # This is a bit more difficult, basically, if we have
             # our word show up in any extracted entities, then we
-            # need to remove that entity from our list of entities
+            # need to remove that entity from our list of entities.
             if self.extracted_entities:
                 last_entity = self.extracted_entities[-1]
                 if iu_word in last_entity.values():
@@ -159,18 +166,26 @@ class RASA_SIUM(Incremental_Component):
         message.set("entities", self.extracted_entities, add_to_output=True)
 
     def __get_intents_and_ranks(self):
-        # get the current prediction state and the sum of all the intent rankings
-        # this is needed to normalize the confidence values.
+        # Get the current prediction state and the sum of all the
+        # intent rankings this is needed to normalize the confidence
+        #  values.
         intents_maxent_prob = self.sium.get_current_prediction_state()
-        intent_ranking_sum = sum(intents_maxent_prob.values())
-        # predict our intent, and calculate the normalized confidence score for it
-        pred_intent = {'name': self.sium.get_predicted_intent()[0], 
-            'confidence': intents_maxent_prob[self.sium.get_predicted_intent()[0]]/intent_ranking_sum}
-        # rank the rest of the intents in terms of confidence.
-        norm_intent_ranking = [{'name': intent,
-                                   'confidence': intents_maxent_prob[intent]/intent_ranking_sum}
-                                  for intent in intents_maxent_prob]  
-        return pred_intent, norm_intent_ranking      
+        # Sum of all the intent ranking from maximum entropy
+        # We need this to normalize confidences to sum to 1.
+        int_rank_sum = sum(intents_maxent_prob.values())
+        # Predict our intent, and calculate the normalized confidence
+        # score for the intent.
+        curr_pred_intent = self.sium.get_predicted_intent()[0]
+        confidence = intents_maxent_prob[curr_pred_intent] / int_rank_sum
+        pred_intent = {
+            'name': curr_pred_intent,
+            'confidence': conf
+        }
+        # Rank and normalize the rest of the intents in terms of confidence.
+        norm_rank = [{'name': intent,
+                      'confidence': intents_maxent_prob[intent] / int_rank_sum}
+                     for intent in intents_maxent_prob]
+        return pred_intent, norm_intent_ranking
 
     @classmethod
     def load(cls,
