@@ -201,7 +201,7 @@ class Trainer(object):
             logger.info("Finished training component.")
             if updates:
                 context.update(updates)
-                
+
         return Interpreter(self.pipeline, context)
 
     def persist(self, path, persistor=None, project_name=None,
@@ -390,8 +390,8 @@ class Incremental_Interpreter(Interpreter):
 
         Incremental_Interpreter.ensure_model_compatibility(model_metadata)
         return Incremental_Interpreter.create(model_metadata,
-                                  component_builder,
-                                  skip_validation)
+                                              component_builder,
+                                              skip_validation)
 
     @staticmethod
     def create(model_metadata,  # type: Metadata
@@ -430,49 +430,56 @@ class Incremental_Interpreter(Interpreter):
 
         return Incremental_Interpreter(pipeline, context, model_metadata)
 
-    # overriding the init function to make message a variable contained in self
-    # so that it can be preserved across multiple incremental_parse calls, initialize
-    # in init, and get modified until it is eventually cleared in new_utterance
+    # Overriding the init function to make message a variable contained in self
+    # so that it can be preserved across multiple incremental_parse calls, 
+    # self.message is initialized in init, and get modified with each parse
+    # call until it is eventually cleared when new_utterance is called
     def __init__(self, pipeline, context, model_metadata=None):
         super().__init__(pipeline, context, model_metadata)
+        # TODO: assert that every compoenent in the pipeline is incremental
         self.message = Message(text="")
 
-    # call this function when creating up a new utterance
+    # Call this function when creating up a new utterance
     # this will tell the incremental components to clear their
-    # internal states and start clean
+    # internal states and start clean.
     def new_utterance(self):
         for component in self.pipeline:
             component.new_utterance()
         self.message = Message(text="")
 
-    def revoke_word(self):
-        prev_iu = self.message.get('incr_edit_message')
-        if prev_iu:
-            prev_iu = prev_iu[-1]
-            revoke_iu = (prev_iu[0], "revoke")
-            self.message.get('incr_edit_message').append(revoke_iu)
-            for component in self.pipeline:
-                component.process(self.message, **self.context)
-        return prev_iu
+    # def revoke_word(self):
+    #     prev_iu = self.message.get('incr_edit_message')
+    #     if prev_iu:
+    #         prev_iu = prev_iu[-1]
+    #         revoke_iu = (prev_iu[0], "revoke")
+    #         self.message.get('incr_edit_message').append(revoke_iu)
+    #         for component in self.pipeline:
+    #             component.process(self.message, **self.context)
+    #     return prev_iu
 
     # here, parse will be preserved but be breaking up the text into individual
     # words, then fed into the incremental component. This way, cmd-line evaluation 
     # can be preserved without many changes, and we can still evaluate an incremental
     # component from cmd-line.
-    # TODO: for now, this will just call parse_incremental because we haven't 
-    # fully implemented that method for a real ASR yet.
     def parse(self, text, time=None, only_output_properties=True):
         self.new_utterance()
-        return self.parse_incremental(text, time, only_output_properties)
+        for word in text.split():
+            iu = (word, "add")
+            self.parse_incremental(iu, time)
+        output = self.default_output_attributes()
+        output.update(self.message.as_dict(
+                      only_output_properties=only_output_properties))
+        return output
 
     # new_utterance should be called before each new utterance, and that component
     # will be responsible for clearing its internal state. However, the message
     # is responsible for clearing/restarting the message object
-    def parse_incremental(self, text, time=None, only_output_properties=True):
-
-        random_revoke_words = ["restaurant", "playlist", "sandwich", "poster", "song", "forty", "picture", "frame"]
-
-        if not text:
+    # iu parameter is a tuple in the form of (word, type), where word is the 
+    # word being passed by the asr, and type is of either "add" or 
+    # "revoke". This just puts the iu on the message bus, and the 
+    # component has the responsibility of handling adds or revokes.
+    def parse_incremental(self, iu, time=None, only_output_properties=True):
+        if not iu:
             # Not all components are able to handle empty strings. So we need
             # to prevent that... This default return will not contain all
             # output attributes of all components, but in the end, no one
@@ -481,29 +488,17 @@ class Incremental_Interpreter(Interpreter):
             output["text"] = ""
             return output
 
-        # for each new word coming in, we will call process on our component, however
-        # since we are 'faking' it for now, we are still taking in the whole utterance
-        # and splitting it here
-        for word in text.split():
-            if(self.message.get('incr_edit_message') is None):
-                self.message.set('incr_edit_message', list())
+        # Initialize our incr_edit_message if this is the first
+        # call to it.
+        if(self.message.get('incr_edit_message') is None):
+            self.message.set('incr_edit_message', list())
 
-            # proof of concept testing of revokes
-            if random.random() < 0.3 and len(self.message.get('incr_edit_message')) > 1:
-                # add random word from list
-                # print("Before adding incorrect word: ", self.message.as_dict())
-                self.message.get('incr_edit_message').append((random.choice(random_revoke_words), "add"))
-                for component in self.pipeline:
-                    component.process(self.message, **self.context)
-                # print("After adding incorrect word: ", self.message.as_dict())                
-                revoked = self.revoke_word()
-                # print("After revoking incorrect word: ", self.message.as_dict())                
+        self.message.get('incr_edit_message').append(iu)
 
-            self.message.get('incr_edit_message').append((word, "add"))
-
-            for component in self.pipeline:
-                component.process(self.message, **self.context)
+        for component in self.pipeline:
+            component.process(self.message, **self.context)
         output = self.default_output_attributes()
         output.update(self.message.as_dict(
                 only_output_properties=only_output_properties))
         return output
+
