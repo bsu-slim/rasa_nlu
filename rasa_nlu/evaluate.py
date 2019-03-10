@@ -73,10 +73,11 @@ def create_argument_parser():
 
     parser.add_argument('--incremental',
                         action='store_true',
-                        help='If using an incremental component, this flag '
-                            'will instantiate an incremental parser for the component. '
-                            'This requires components in the pipeline inherit the incremental_'
-                            'component class')
+                        help="If using an incremental component, this flag "
+                             "will instantiate an incremental parser for the "
+                             "component. This requires components in the"
+                             "pipeline inherit the incremental_component"
+                             "class")
 
     utils.add_logging_option_arguments(parser, default=logging.INFO)
 
@@ -641,7 +642,6 @@ def run_evaluation(data_path, model_path,
 
         evaluate_intents(intent_results, errors_filename, confmat_filename,
                          intent_hist_filename)
-
     if extractors:
         entity_targets = get_entity_targets(test_data)
 
