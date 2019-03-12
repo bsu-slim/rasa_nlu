@@ -1,5 +1,7 @@
-:desc: How to build custom Rasa NLU components
-.. _section_customcomponents:
+:desc: Create custom components to create additional features like sentiment
+       analysis to integrate with open source bot framework Rasa Stack.
+
+.._section_customcomponents:
 
 Custom Components
 =================
@@ -49,3 +51,6 @@ Component
    .. automethod:: partially_process
 
    .. automethod:: can_handle_language
+
+
+.. include:: feedback.inc

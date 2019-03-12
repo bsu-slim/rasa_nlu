@@ -3,12 +3,16 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+# TODO: typing here and in other files
+from typing import Any, Dict, List, Optional, Text
+
 import pickle
 from nltk import MaxentClassifier
 from rasa_nlu.sium import SIUM
 from rasa_nlu.components import Component
 from rasa_nlu import utils
 import os
+
 
 from rasa_nlu.classifiers import INTENT_RANKING_LENGTH
 from rasa_nlu.components import Incremental_Component
@@ -19,29 +23,37 @@ from rasa_nlu.training_data import TrainingData
 from rasa_nlu.tokenizers import Tokenizer, Token
 
 
-class RASA_SIUM(Incremental_Component):
+class rasa_sium(Incremental_Component):
     """A new component"""
 
-    name = "sium"
     provides = ["intent", "intent_ranking", "entities", "tokens"]
+    # TODO: require inc_iu_message
     requires = []
-    defaults = {}   
-    language_list = None
+    defaults = {}
 
     # don't run unless these packages are installed on machine
-    @classmethod
-    def required_packages(cls):
-        return ["nltk", "pickle"]
 
-    def __init__(self, component_config=None):
-        self.sium = SIUM("rasa-sium")
+    def __init__(self,
+                 component_config: Optional[Dict[Text, Any]]=None) -> None:
+
+        super(rasa_sium, self).__init__(component_config)
+
+        # Initialize sium instance
+        self.sium = SIUM("rasa_sium")
         self.context = {}
+        # Keep track of tokens, entities, and word_offset
         self.tokens = []
         self.extracted_entities = []
         self.word_offset = 0
-        self.component_config = component_config
 
-    def train(self, training_data, cfg, **kwargs):
+    @classmethod
+    def required_packages(cls) -> List[Text]:
+        return ["nltk", "pickle"]
+
+    def train(self,
+              training_data: 'TrainingData',
+              cfg: RasaNLUModelConfig,
+              **kwargs: Any) -> None:
         """Train this component.
 
         This is the components chance to train itself provided
@@ -79,7 +91,7 @@ class RASA_SIUM(Incremental_Component):
     # entity extraction in rasa, and we had to use our own in order
     # to keep our incremental framework possible. We use an extremely
     # simple whitespace tokenizer.
-    def process(self, message, **kwargs):
+    def process(self, message: 'Message', **kwargs: Any) -> None:
         """Process an incoming message.
 
         This is the components chance to process an incoming
@@ -92,6 +104,8 @@ class RASA_SIUM(Incremental_Component):
         of components previous to this one."""
 
         self.sium.set_context(self.context)
+
+        # TODO: lowercase IU
 
         # The Latest IU is being appended to
         # "incr_edit_message" in the message,
@@ -117,7 +131,7 @@ class RASA_SIUM(Incremental_Component):
                         'end': self.word_offset+len(iu_word)-1,
                         'value': iu_word, 'entity': p,
                         'confidence': prop_dist.prob(p),
-                        'extractor': 'sium'
+                        'extractor': 'rasa_sium'
                     })
             self.word_offset += len(iu_word)
         elif iu_type is "revoke":
@@ -162,17 +176,16 @@ class RASA_SIUM(Incremental_Component):
                      for intent in intents_maxent_prob]
         return pred_intent, norm_rank
 
+    # why might this be happening?
     @classmethod
     def load(cls,
-             model_dir=None,  # type: Optional[Text]
-             model_metadata=None,  # type: Optional[Metadata]
-             cached_component=None,  # type: Optional[Component]
-             **kwargs  # type: **Any
-             ):
-        # type: (...) -> SklearnIntentClassifier
-
-        meta = model_metadata.for_component(cls.name)
-        file_name = meta.get("classifier_file", 'sium')
+             meta: Dict[Text, Any],
+             model_dir: Optional[Text] = None,
+             model_metadata: Optional[Metadata] = None,
+             cached_component: Optional['rasa_sium'] = None,
+             **kwargs: Any
+             ) -> 'rasa_sium':
+        file_name = meta.get("file")
         classifier_file = os.path.join(model_dir, file_name)
 
         if os.path.exists(classifier_file):
@@ -180,10 +193,12 @@ class RASA_SIUM(Incremental_Component):
         else:
             return cls(meta)
 
-    def persist(self, model_dir):
-        # type: (Text) -> Optional[Dict[Text, Any]]
+    def persist(self,
+                file_name: Text,
+                model_dir: Text) -> Optional[Dict[Text, Any]]:
         """Persist this model into the passed directory."""
 
-        classifier_file = os.path.join(model_dir, 'sium')
+        file_name = file_name + ".pkl"
+        classifier_file = os.path.join(model_dir, file_name)
         utils.pycloud_pickle(classifier_file, self)
-        return {'classifier_file': 'sium'}
+        return {"file": file_name}

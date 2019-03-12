@@ -1,20 +1,13 @@
-from __future__ import division
-from __future__ import unicode_literals
-from __future__ import print_function
-from __future__ import absolute_import
-
 import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Text
 
 from rasa_nlu import utils
-from rasa_nlu.featurizers import Featurizer
-from rasa_nlu.training_data import Message
-from rasa_nlu.training_data import TrainingData
-from rasa_nlu.components import Component
 from rasa_nlu.config import RasaNLUModelConfig
+from rasa_nlu.featurizers import Featurizer
 from rasa_nlu.model import Metadata
+from rasa_nlu.training_data import Message, TrainingData
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +18,12 @@ class CountVectorsFeaturizer(Featurizer):
     Creates bag-of-words representation of intent features
     using sklearn's `CountVectorizer`.
     All tokens which consist only of digits (e.g. 123 and 99
-    but not ab12d) will be represented by a single feature."""
+    but not ab12d) will be represented by a single feature.
 
-    name = "intent_featurizer_count_vectors"
+    Set `analyzer` to 'char_wb'
+    to use the idea of Subword Semantic Hashing
+    from https://arxiv.org/abs/1810.07150.
+    """
 
     provides = ["text_features"]
 
@@ -37,7 +33,13 @@ class CountVectorsFeaturizer(Featurizer):
         # the parameters are taken from
         # sklearn's CountVectorizer
 
+        # whether to use word or character n-grams
+        # 'char_wb' creates character n-grams inside word boundaries
+        # n-grams at the edges of words are padded with space.
+        "analyzer": 'word',  # use 'char' or 'char_wb' for character
+
         # regular expression for tokens
+        # only used if analyzer == 'word'
         "token_pattern": r'(?u)\b\w\w+\b',
 
         # remove accents during the preprocessing step
@@ -73,11 +75,13 @@ class CountVectorsFeaturizer(Featurizer):
     }
 
     @classmethod
-    def required_packages(cls):
-        # type: () -> List[Text]
+    def required_packages(cls) -> List[Text]:
         return ["sklearn"]
 
     def _load_count_vect_params(self):
+        # set analyzer
+        self.analyzer = self.component_config['analyzer']
+
         # regular expression for tokens
         self.token_pattern = self.component_config['token_pattern']
 
@@ -121,6 +125,20 @@ class CountVectorsFeaturizer(Featurizer):
             if self.OOV_words:
                 self.OOV_words = [w.lower() for w in self.OOV_words]
 
+    def _check_analyzer(self):
+        if self.analyzer != 'word':
+            if self.OOV_token is not None:
+                logger.warning("Analyzer is set to character, "
+                               "provided OOV word token will be ignored.")
+            if self.stop_words is not None:
+                logger.warning("Analyzer is set to character, "
+                               "provided stop words will be ignored.")
+            if self.max_ngram == 1:
+                logger.warning("Analyzer is set to character, "
+                               "but max n-gram is set to 1. "
+                               "It means that the vocabulary will "
+                               "contain single letters only.")
+
     def __init__(self, component_config=None):
         """Construct a new count vectorizer using the sklearn framework."""
 
@@ -132,11 +150,15 @@ class CountVectorsFeaturizer(Featurizer):
         # handling Out-Of-Vacabulary (OOV) words
         self._load_OOV_params()
 
+        # warn that some of config parameters might be ignored
+        self._check_analyzer()
+
         # declare class instance for CountVectorizer
         self.vect = None
 
     def _tokenizer(self, text):
-        """Override tokenizer in CountVectorizer"""
+        """Override tokenizer in CountVectorizer."""
+
         text = re.sub(r'\b[0-9]+\b', '__NUMBER__', text)
 
         token_pattern = re.compile(self.token_pattern)
@@ -180,10 +202,16 @@ class CountVectorsFeaturizer(Featurizer):
                            "will be ignored during prediction."
                            "".format(self.OOV_token))
 
-    def train(self, training_data, cfg=None, **kwargs):
-        # type: (TrainingData, RasaNLUModelConfig, **Any) -> None
-        """Take parameters from config and
-            construct a new count vectorizer using the sklearn framework."""
+    def train(self,
+              training_data: TrainingData,
+              cfg: RasaNLUModelConfig = None,
+              **kwargs: Any) -> None:
+        """Train the featurizer.
+
+        Take parameters from config and
+        construct a new count vectorizer using the sklearn framework.
+        """
+
         from sklearn.feature_extraction.text import CountVectorizer
 
         spacy_nlp = kwargs.get("spacy_nlp")
@@ -202,7 +230,8 @@ class CountVectorsFeaturizer(Featurizer):
                                     max_df=self.max_df,
                                     min_df=self.min_df,
                                     max_features=self.max_features,
-                                    tokenizer=self._tokenizer)
+                                    tokenizer=self._tokenizer,
+                                    analyzer=self.analyzer)
 
         lem_exs = [self._get_message_text(example)
                    for example in training_data.intent_examples]
@@ -222,8 +251,7 @@ class CountVectorsFeaturizer(Featurizer):
                         self._combine_with_existing_text_features(example,
                                                                   X[i]))
 
-    def process(self, message, **kwargs):
-        # type: (Message, **Any) -> None
+    def process(self, message: Message, **kwargs: Any) -> None:
         if self.vect is None:
             logger.error("There is no trained CountVectorizer: "
                          "component is either not trained or "
@@ -236,28 +264,30 @@ class CountVectorsFeaturizer(Featurizer):
                         self._combine_with_existing_text_features(message,
                                                                   bag))
 
-    def persist(self, model_dir):
-        # type: (Text) -> Dict[Text, Any]
+    def persist(self,
+                file_name: Text,
+                model_dir: Text) -> Optional[Dict[Text, Any]]:
         """Persist this model into the passed directory.
-        Returns the metadata necessary to load the model again."""
 
-        featurizer_file = os.path.join(model_dir, self.name + ".pkl")
+        Returns the metadata necessary to load the model again.
+        """
+
+        file_name = file_name + ".pkl"
+        featurizer_file = os.path.join(model_dir, file_name)
         utils.pycloud_pickle(featurizer_file, self)
-        return {"featurizer_file": self.name + ".pkl"}
+        return {"file": file_name}
 
     @classmethod
     def load(cls,
-             model_dir=None,  # type: Text
-             model_metadata=None,  # type: Metadata
-             cached_component=None,  # type: Optional[Component]
-             **kwargs  # type: **Any
-             ):
-        # type: (...) -> CountVectorsFeaturizer
+             meta: Dict[Text, Any],
+             model_dir: Text = None,
+             model_metadata: Metadata = None,
+             cached_component: Optional['CountVectorsFeaturizer'] = None,
+             **kwargs: Any
+             ) -> 'CountVectorsFeaturizer':
 
-        meta = model_metadata.for_component(cls.name)
-
-        if model_dir and meta.get("featurizer_file"):
-            file_name = meta.get("featurizer_file")
+        if model_dir and meta.get("file"):
+            file_name = meta.get("file")
             featurizer_file = os.path.join(model_dir, file_name)
             return utils.pycloud_unpickle(featurizer_file)
         else:

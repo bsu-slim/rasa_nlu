@@ -1,8 +1,109 @@
-:desc: Updating your Rasa NLU Project to a New Version
+:desc: Read more about changes between major versions of our open source
+       NLP engine and how to migrate from one version to another.
+
+.. _section_migration_guide:
+
 Migration Guide
 ===============
 This page contains information about changes between major versions and
 how you can migrate from one version to another.
+
+0.14.x to 0.15.0
+----------------
+
+.. warning::
+
+  This is a release **breaking backwards compatibility**.
+  Unfortunately, it is not possible to load
+  previously trained models (as the stored file names have changed as
+  well as the configuration and metadata). Please make sure to retrain
+  a model before trying to use it with this improved version.
+
+model configuration
+~~~~~~~~~~~~~~~~~~~
+- The standard pipelines have been renamed. ``spacy_sklearn`` is now 
+  ``pretrained_embeddings_spacy`` and ``tensorflow_embedding`` is now 
+  ``supervised_embeddings``.
+- Components names used for nlu config have been changed.
+  Use component class name in nlu config file.
+
+custom components
+~~~~~~~~~~~~~~~~~
+- The signature of Component's methods have been changed:
+  - ``load(...)``, ``create(...)`` and ``cache_key(...)`` methods
+    additionally take component's meta/config dicts
+  - ``persist(...)`` method additionally takes file name prefix
+  Change your custom components accordingly.
+
+function names
+~~~~~~~~~~~~~~
+- ``rasa_nlu.evaluate`` was renamed to ``rasa_nlu.test``
+- ``rasa_nlu.test.run_cv_evaluation`` was renamed to
+  ``rasa_nlu.test.cross_validate``
+- ``rasa_nlu.train.do_train()`` was renamed to to ``rasa_nlu.train.train()``
+
+0.13.x to 0.14.0
+----------------
+- ``/config`` endpoint removed, when training a new model, the user should
+  always post the configuration as part of the request instead of relying
+  on the servers config.
+- ``ner_duckling`` support has been removed. Use ``DucklingHTTPExtractor``
+  instead. More info about ``DucklingHTTPExtractor`` can be found at
+  https://rasa.com/docs/nlu/components/#ner-duckling-http.
+
+0.13.x to 0.13.3
+----------------
+- ``rasa_nlu.server`` has to  be supplied with a ``yml`` file defining the
+  model endpoint from which to retrieve training data. The file location has
+  be passed with the ``--endpoints`` argument, e.g.
+  ``python rasa_nlu.server --path projects --endpoints endpoints.yml``
+  ``endpoints.yml`` needs to contain the ``model`` key
+  with a ``url`` and an optional ``token``. Here's an example:
+
+  .. code-block:: yaml
+
+    model:
+      url: http://my_model_server.com/models/default/nlu/tags/latest
+      token: my_model_server_token
+
+  .. note::
+
+    If you configure ``rasa_nlu.server`` to pull models from a remote server,
+    the default project name will be used. It is defined
+    ``RasaNLUModelConfig.DEFAULT_PROJECT_NAME``.
+
+
+- ``rasa_nlu.train`` can also be run with the ``--endpoints`` argument
+  if you want to pull training data from a URL. Alternatively, the
+  current ``--url`` syntax is still supported.
+
+  .. code-block:: yaml
+
+    data:
+      url: http://my_data_server.com/projects/default/data
+      token: my_data_server_token
+
+  .. note::
+
+    Your endpoint file may contain entries for both ``model`` and ``data``.
+    ``rasa_nlu.server`` and ``rasa_nlu.train`` will pick the relevant entry.
+
+- If you directly access the ``DataRouter`` class or ``rasa_nlu.train``'s
+  ``do_train()`` method, you can directly create instances of
+  ``EndpointConfig`` without creating a ``yml`` file. Example:
+
+  .. code-block:: python
+
+    from rasa_nlu.utils import EndpointConfig
+    from rasa_nlu.data_router import DataRouter
+
+    model_endpoint = EndpointConfig(
+        url="http://my_model_server.com/models/default/nlu/tags/latest",
+        token="my_model_server_token"
+    )
+
+    interpreter = DataRouter("projects", model_server=model_endpoint)
+
 
 0.12.x to 0.13.0
 ----------------
@@ -12,6 +113,28 @@ how you can migrate from one version to another.
   This is a release **breaking backwards compatibility**.
   Unfortunately, it is not possible to load previously trained models as
   the parameters for the tensorflow and CRF models changed.
+
+CRF model configuration
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The feature names for the features of the entity CRF have changed:
+
++------------------+------------------+
+| old feature name | new feature name |
++==================+==================+
+| pre2             | prefix2          |
++------------------+------------------+
+| pre5             | prefix5          |
++------------------+------------------+
+| word2            | suffix2          |
++------------------+------------------+
+| word3            | suffix3          |
++------------------+------------------+
+| word5            | suffix5          |
++------------------+------------------+
+
+Please change these keys in your pipeline configuration of the ``CRFEntityExtractor``
+components ``features`` attribute if you use them.
 
 0.11.x to 0.12.0
 ----------------
@@ -36,9 +159,9 @@ parameters. Example:
       langauge: "en"
 
       pipeline:
-      - name: "nlp_spacy"
+      - name: "SpacyNLP"
         model: "en"               # parameter of the spacy component
-      - name: "ner_synonyms"
+      - name: "EntitySynonymMapper"
 
 
 All other parameters have either been moved to the scripts
@@ -74,7 +197,7 @@ persistors:
 
 0.8.x to 0.9.x
 ---------------
-- add ``tokenizer_spacy`` to trained spacy_sklearn models metadata (right after the ``nlp_spacy``). alternative is to retrain the model
+- add ``SpacyTokenizer`` to trained spacy_sklearn models metadata (right after the ``SpacyNLP``). alternative is to retrain the model
 
 0.7.x to 0.8.x
 ---------------
@@ -130,3 +253,6 @@ persistors:
           "feature_extractor": null,
           "backend": "spacy_sklearn"
       }
+
+
+.. include:: feedback.inc

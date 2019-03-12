@@ -1,22 +1,14 @@
 # -*- coding: utf-8 -
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
-import os
-
 import numpy as np
 import pytest
 
-from rasa_nlu import training_data, config
-from rasa_nlu.config import RasaNLUModelConfig
+from rasa_nlu import training_data
+from rasa_nlu.tokenizers import Token
 from rasa_nlu.tokenizers.mitie_tokenizer import MitieTokenizer
 from rasa_nlu.tokenizers.spacy_tokenizer import SpacyTokenizer
 from rasa_nlu.training_data import Message
 from rasa_nlu.training_data import TrainingData
-from rasa_nlu.tokenizers import Token
+from rasa_nlu.config import RasaNLUModelConfig
 
 
 @pytest.mark.parametrize("sentence, expected", [
@@ -34,7 +26,8 @@ def test_spacy_featurizer(sentence, expected, spacy_nlp):
 def test_mitie_featurizer(mitie_feature_extractor, default_config):
     from rasa_nlu.featurizers.mitie_featurizer import MitieFeaturizer
 
-    ftr = MitieFeaturizer.create(config.load("sample_configs/config_mitie.yml"))
+    mitie_component_config = {'name': "MitieFeaturizer"}
+    ftr = MitieFeaturizer.create(mitie_component_config, RasaNLUModelConfig())
     sentence = "Hey how are you today"
     tokens = MitieTokenizer().tokenize(sentence)
     vecs = ftr.features_for_tokens(tokens, mitie_feature_extractor)
@@ -53,14 +46,14 @@ def test_ngram_featurizer(spacy_nlp):
     greet = {"intent": "greet", "text_features": [0.5]}
     goodbye = {"intent": "goodbye", "text_features": [0.5]}
     labeled_sentences = [
-                            Message("heyheyheyhey", greet),
-                            Message("howdyheyhowdy", greet),
-                            Message("heyhey howdyheyhowdy", greet),
-                            Message("howdyheyhowdy heyhey", greet),
-                            Message("astalavistasista", goodbye),
-                            Message("astalavistasista sistala", goodbye),
-                            Message("sistala astalavistasista", goodbye),
-                        ] * repetition_factor
+        Message("heyheyheyhey", greet),
+        Message("howdyheyhowdy", greet),
+        Message("heyhey howdyheyhowdy", greet),
+        Message("howdyheyhowdy heyhey", greet),
+        Message("astalavistasista", goodbye),
+        Message("astalavistasista sistala", goodbye),
+        Message("sistala astalavistasista", goodbye),
+    ] * repetition_factor
 
     for m in labeled_sentences:
         m.set("spacy_doc", spacy_nlp(m.text))
@@ -104,6 +97,41 @@ def test_regex_featurizer(sentence, expected, labeled_tokens, spacy_nlp):
         assert(num_matches == labeled_tokens.count(i))
 
 
+@pytest.mark.parametrize("sentence, expected, labeled_tokens", [
+    ("lemonade and mapo tofu", [1, 1], [0., 2., 3.]),
+    ("a cup of tea", [1, 0], [3.]),
+    ("Is burrito my favorite food?", [0, 1], [1.]),
+    ("I want club?mate", [1, 0], [2., 3.])
+])
+def test_lookup_tables(sentence, expected, labeled_tokens, spacy_nlp):
+    from rasa_nlu.featurizers.regex_featurizer import RegexFeaturizer
+
+    lookups = [
+        {"name": 'drinks', "elements": ["mojito", "lemonade",
+                                        "sweet berry wine",
+                                        "tea", "club?mate"]},
+        {"name": 'plates', "elements": "data/test/lookup_tables/plates.txt"}
+    ]
+    ftr = RegexFeaturizer(lookup_tables=lookups)
+
+    # adds tokens to the message
+    tokenizer = SpacyTokenizer()
+    message = Message(sentence)
+    message.set("spacy_doc", spacy_nlp(sentence))
+    tokenizer.process(message)
+
+    result = ftr.features_for_patterns(message)
+    assert np.allclose(result, expected, atol=1e-10)
+
+    # the tokenizer should have added tokens
+    assert len(message.get("tokens", [])) > 0
+    # the number of regex matches on each token should match
+    for i, token in enumerate(message.get("tokens")):
+        token_matches = token.get("pattern").values()
+        num_matches = sum(token_matches)
+        assert(num_matches == labeled_tokens.count(i))
+
+
 def test_spacy_featurizer_casing(spacy_nlp):
     from rasa_nlu.featurizers import spacy_featurizer
 
@@ -122,7 +150,7 @@ def test_spacy_featurizer_casing(spacy_nlp):
 
         assert np.allclose(vecs, vecs_capitalized, atol=1e-5), \
             "Vectors are unequal for texts '{}' and '{}'".format(
-                    e.text, e.text.capitalize())
+                e.text, e.text.capitalize())
 
 
 @pytest.mark.parametrize("sentence, expected", [
@@ -137,6 +165,7 @@ def test_count_vector_featurizer(sentence, expected):
 
     ftr = CountVectorsFeaturizer({"token_pattern": r'(?u)\b\w+\b'})
     train_message = Message(sentence)
+    # this is needed for a valid training example
     train_message.set("intent", "bla")
     data = TrainingData([train_message])
     ftr.train(data)
@@ -160,6 +189,7 @@ def test_count_vector_featurizer_oov_token(sentence, expected):
     ftr = CountVectorsFeaturizer({"token_pattern": r'(?u)\b\w+\b',
                                   "OOV_token": '__oov__'})
     train_message = Message(sentence)
+    # this is needed for a valid training example
     train_message.set("intent", "bla")
     data = TrainingData([train_message])
     ftr.train(data)
@@ -184,6 +214,7 @@ def test_count_vector_featurizer_oov_words(sentence, expected):
                                   "OOV_token": '__oov__',
                                   "OOV_words": ['oov_word0', 'OOV_word1']})
     train_message = Message(sentence)
+    # this is needed for a valid training example
     train_message.set("intent", "bla")
     data = TrainingData([train_message])
     ftr.train(data)
@@ -218,7 +249,8 @@ def test_count_vector_featurizer_using_tokens(tokens, expected):
 
     train_message = Message("")
     train_message.set("tokens", tokens_feature)
-    train_message.set("intent", "bla")  # this is needed for a valid training example
+    # this is needed for a valid training example
+    train_message.set("intent", "bla")
     data = TrainingData([train_message])
 
     ftr.train(data)
@@ -226,6 +258,30 @@ def test_count_vector_featurizer_using_tokens(tokens, expected):
     test_message = Message("")
     test_message.set("tokens", tokens_feature)
 
+    ftr.process(test_message)
+
+    assert np.all(test_message.get("text_features") == expected)
+
+
+@pytest.mark.parametrize("sentence, expected", [
+    ("ababab", [3, 3, 3, 2]),
+    ("ab ab ab", [2, 2, 3, 3, 3, 2]),
+    ("abc", [1, 1, 1, 1, 1])
+])
+def test_count_vector_featurizer(sentence, expected):
+    from rasa_nlu.featurizers.count_vectors_featurizer import \
+        CountVectorsFeaturizer
+
+    ftr = CountVectorsFeaturizer({"min_ngram": 1,
+                                  "max_ngram": 2,
+                                  "analyzer": 'char'})
+    train_message = Message(sentence)
+    # this is needed for a valid training example
+    train_message.set("intent", "bla")
+    data = TrainingData([train_message])
+    ftr.train(data)
+
+    test_message = Message(sentence)
     ftr.process(test_message)
 
     assert np.all(test_message.get("text_features") == expected)

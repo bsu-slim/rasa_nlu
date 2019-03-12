@@ -1,20 +1,13 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
 import io
 import json
 import tempfile
 import time
 
 import pytest
-import yaml
+import ruamel.yaml as yaml
 from treq.testing import StubTreq
 
-from rasa_nlu import utils
-from rasa_nlu.config import RasaNLUModelConfig
 from rasa_nlu.data_router import DataRouter
 from rasa_nlu.server import RasaNLU
 from tests import utilities
@@ -60,12 +53,6 @@ def test_status(app):
     assert "current_training_processes" in rjs
     assert "max_training_processes" in rjs
     assert "default" in rjs["available_projects"]
-
-
-@pytest.inlineCallbacks
-def test_config(app):
-    response = yield app.get("http://dummy-uri/config")
-    assert response.code == 200
 
 
 @pytest.inlineCallbacks
@@ -159,6 +146,22 @@ def test_post_train(app, rasa_default_train_data):
 
 @utilities.slowtest
 @pytest.inlineCallbacks
+def test_post_train_success(app, rasa_default_train_data):
+    import zipfile
+    model_config = {"pipeline": "keyword", "data": rasa_default_train_data}
+
+    response = app.post("http://dummy-uri/train?project=test&model=test",
+                        json=model_config)
+    time.sleep(3)
+    app.flush()
+    response = yield response
+    content = yield response.content()
+    assert response.code == 200
+    assert zipfile.ZipFile(io.BytesIO(content)).testzip() is None
+
+
+@utilities.slowtest
+@pytest.inlineCallbacks
 def test_post_train_internal_error(app, rasa_default_train_data):
     response = app.post("http://dummy-uri/train?project=test",
                         json={"data": "dummy_data_for_triggering_an_error"})
@@ -236,6 +239,7 @@ def test_evaluate(app, rasa_default_train_data):
     rjs = yield response.json()
     assert response.code == 200, "Evaluation should start"
     assert "intent_evaluation" in rjs
+    assert "entity_evaluation" in rjs
     assert all(prop in rjs["intent_evaluation"] for prop in ["report",
                                                              "predictions",
                                                              "precision",
@@ -255,7 +259,8 @@ def test_unload_model_error(app):
     response = yield app.delete(model_err)
     rjs = yield response.json()
     assert response.code == 500, "Model not found"
-    assert rjs['error'] == "Failed to unload model my_model for project default."
+    assert rjs['error'] == ("Failed to unload model my_model for project "
+                            "default.")
 
 
 @pytest.inlineCallbacks

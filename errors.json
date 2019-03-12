@@ -1,0 +1,18 @@
+[
+    {
+        "text": "",
+        "intent": "AddToPlaylist",
+        "intent_prediction": {
+            "name": "SearchCreativeWork",
+            "confidence": 0.8581003284496187
+        }
+    },
+    {
+        "text": "",
+        "intent": "SearchScreeningEvent",
+        "intent_prediction": {
+            "name": "SearchCreativeWork",
+            "confidence": 0.38234628589617214
+        }
+    }
+]

@@ -1,17 +1,10 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
 import tempfile
 
 import pytest
-from typing import Text
 
-import rasa_nlu
 from rasa_nlu import config, utils
-from rasa_nlu.config import RasaNLUModelConfig, InvalidConfigError
 from rasa_nlu.registry import registered_pipeline_templates
+from rasa_nlu.components import ComponentBuilder
 from tests.conftest import CONFIG_DEFAULTS_PATH
 from tests.utilities import write_file_config
 
@@ -31,17 +24,18 @@ def test_blank_config():
 
 def test_invalid_config_json():
     file_config = """pipeline: [spacy_sklearn"""  # invalid yaml
-    with tempfile.NamedTemporaryFile("w+", suffix="_tmp_config_file.json") as f:
+    with tempfile.NamedTemporaryFile("w+",
+                                     suffix="_tmp_config_file.json") as f:
         f.write(file_config)
         f.flush()
-        with pytest.raises(rasa_nlu.config.InvalidConfigError):
+        with pytest.raises(config.InvalidConfigError):
             config.load(f.name)
 
 
 def test_invalid_pipeline_template():
     args = {"pipeline": "my_made_up_name"}
     f = write_file_config(args)
-    with pytest.raises(InvalidConfigError) as execinfo:
+    with pytest.raises(config.InvalidConfigError) as execinfo:
         config.load(f.name)
     assert "unknown pipeline template" in str(execinfo.value)
 
@@ -56,15 +50,28 @@ def test_pipeline_looksup_registry():
 
 
 def test_default_config_file():
-    final_config = RasaNLUModelConfig()
+    final_config = config.RasaNLUModelConfig()
     assert len(final_config) > 1
 
 
 def test_set_attr_on_component(default_config):
-    cfg = config.load("sample_configs/config_spacy.yml")
-    cfg.set_component_attr("intent_classifier_sklearn", C=324)
+    cfg = config.load("sample_configs/config_pretrained_embeddings_spacy.yml")
+    cfg.set_component_attr(6, C=324)
 
-    expected = {"C": 324, "name": "intent_classifier_sklearn"}
+    assert cfg.for_component(1) == {"name": "SpacyTokenizer"}
+    assert cfg.for_component(6) == {"name": "SklearnIntentClassifier",
+                                    "C": 324}
 
-    assert cfg.for_component("intent_classifier_sklearn") == expected
-    assert cfg.for_component("tokenizer_spacy") == {"name": "tokenizer_spacy"}
+
+def test_override_defaults_supervised_embeddings_pipeline():
+    cfg = config.load("data/test/config_embedding_test.yml")
+    builder = ComponentBuilder()
+
+    component1_cfg = cfg.for_component(0)
+
+    component1 = builder.create_component(component1_cfg, cfg)
+    assert component1.max_ngram == 3
+
+    component2_cfg = cfg.for_component(1)
+    component2 = builder.create_component(component2_cfg, cfg)
+    assert component2.epochs == 10
