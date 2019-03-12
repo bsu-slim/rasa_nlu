@@ -61,7 +61,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Rasa NLU'
-copyright = u'2018, Rasa Technologies GmbH'
+copyright = u'2019, Rasa Technologies GmbH'
 author = u'Alan Nichol'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -328,7 +328,7 @@ scv_priority = 'tags'
 scv_show_banner = True
 scv_banner_greatest_tag = True
 scv_sort = ('semver',)
-scv_whitelist_branches = ('master', 'latest')
+scv_whitelist_branches = (re.compile('^master$'),)
 #scv_whitelist_tags = ('None',)
 scv_grm_exclude = ('README.md', '.gitignore', '.nojekyll', 'CNAME')
 scv_whitelist_tags = (re.compile(r'^[123456789]+\.[0-9]+\.\d+$'),

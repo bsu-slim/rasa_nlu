@@ -1,23 +1,21 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+import time
 
 import datetime
-import glob
-
-import os
 import logging
-
-from builtins import object
-from threading import Lock
+import os
+import tempfile
+import zipfile
+from io import BytesIO as IOReader
+from requests.exceptions import InvalidURL, RequestException
+from threading import Lock, Thread
+from typing import List, Optional, Text
 
 from rasa_nlu import utils
-from typing import Text, List
-
 from rasa_nlu.classifiers.keyword_intent_classifier import \
     KeywordIntentClassifier
-from rasa_nlu.model import Metadata, Interpreter
+from rasa_nlu.components import ComponentBuilder
+from rasa_nlu.model import Interpreter, Metadata
+from rasa_nlu.utils import EndpointConfig, is_url
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +23,144 @@ MODEL_NAME_PREFIX = "model_"
 
 FALLBACK_MODEL_NAME = "fallback"
 
+DEFAULT_REQUEST_TIMEOUT = 60 * 5  # 5 minutes
+
+STATUS_READY = 0
+STATUS_TRAINING = 1
+STATUS_FAILED = -1
+
+
+def load_from_server(component_builder: Optional[ComponentBuilder] = None,
+                     project: Optional[Text] = None,
+                     project_dir: Optional[Text] = None,
+                     remote_storage: Optional[Text] = None,
+                     model_server: Optional[EndpointConfig] = None,
+                     wait_time_between_pulls: Optional[int] = None,
+                     ) -> 'Project':
+    """Load a persisted model from a server."""
+
+    project = Project(component_builder=component_builder,
+                      project=project,
+                      project_dir=project_dir,
+                      remote_storage=remote_storage,
+                      pull_models=True)
+
+    _update_model_from_server(model_server, project)
+
+    if wait_time_between_pulls:
+        # continuously pull the model every `wait_time_between_pulls` seconds
+        start_model_pulling_in_worker(model_server,
+                                      wait_time_between_pulls,
+                                      project)
+    return project
+
+
+def _update_model_from_server(model_server: EndpointConfig,
+                              project: 'Project') -> None:
+    """Load a zipped Rasa NLU model from a URL and update the passed
+
+    project."""
+    if not is_url(model_server.url):
+        raise InvalidURL(model_server)
+
+    model_directory = tempfile.mkdtemp()
+
+    new_model_fingerprint, filename = _pull_model_and_fingerprint(
+        model_server, model_directory, project.fingerprint)
+    if new_model_fingerprint:
+        model_name = _get_remote_model_name(filename)
+        project.fingerprint = new_model_fingerprint
+        project.update_model_from_dir_and_unload_others(model_directory,
+                                                        model_name)
+    else:
+        logger.debug("No new model found at URL {}".format(model_server.url))
+
+
+def _get_remote_model_name(filename: Optional[Text]) -> Text:
+    """Get the name to save a model under that was fetched from a
+
+    remote server."""
+    if filename is not None:  # use the filename header if present
+        return filename.strip(".zip")
+    else:  # or else use a timestamp
+        timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+        return MODEL_NAME_PREFIX + timestamp
+
+
+def _pull_model_and_fingerprint(model_server: EndpointConfig,
+                                model_directory: Text,
+                                fingerprint: Optional[Text]
+                                ) -> (Optional[Text], Optional[Text]):
+    """Queries the model server and returns a tuple of containing the
+
+    response's <ETag> header which contains the model hash, and the
+    <filename> header containing the model name."""
+    header = {"If-None-Match": fingerprint}
+    try:
+        logger.debug("Requesting model from server {}..."
+                     "".format(model_server.url))
+        response = model_server.request(method="GET",
+                                        headers=header,
+                                        timeout=DEFAULT_REQUEST_TIMEOUT)
+    except RequestException as e:
+        logger.warning("Tried to fetch model from server, but couldn't reach "
+                       "server. We'll retry later... Error: {}."
+                       "".format(e))
+        return None, None
+
+    if response.status_code == 204:
+        logger.debug("Model server returned 204 status code, indicating "
+                     "that no new model is available. "
+                     "Current fingerprint: {}".format(fingerprint))
+        return response.headers.get("ETag"), response.headers.get("filename")
+    elif response.status_code == 404:
+        logger.debug("Model server didn't find a model for our request. "
+                     "Probably no one did train a model for the project "
+                     "and tag combination yet.")
+        return None, None
+    elif response.status_code != 200:
+        logger.warning("Tried to fetch model from server, but server response "
+                       "status code is {}. We'll retry later..."
+                       "".format(response.status_code))
+        return None, None
+
+    zip_ref = zipfile.ZipFile(IOReader(response.content))
+    zip_ref.extractall(model_directory)
+    logger.debug("Unzipped model to {}"
+                 "".format(os.path.abspath(model_directory)))
+
+    # get the new fingerprint and filename
+    return response.headers.get("ETag"), response.headers.get("filename")
+
+
+def _run_model_pulling_worker(model_server: EndpointConfig,
+                              wait_time_between_pulls: int,
+                              project: 'Project') -> None:
+    while True:
+        _update_model_from_server(model_server, project)
+        time.sleep(wait_time_between_pulls)
+
+
+def start_model_pulling_in_worker(model_server: Optional[EndpointConfig],
+                                  wait_time_between_pulls: int,
+                                  project: 'Project') -> None:
+    worker = Thread(target=_run_model_pulling_worker,
+                    args=(model_server, wait_time_between_pulls, project))
+    worker.setDaemon(True)
+    worker.start()
+
 
 class Project(object):
     def __init__(self,
                  component_builder=None,
                  project=None,
                  project_dir=None,
-                 remote_storage=None):
+                 remote_storage=None,
+                 fingerprint=None,
+                 pull_models=None):
         self._component_builder = component_builder
         self._models = {}
-        self.status = 0
+        self.status = STATUS_READY
         self.current_training_processes = 0
         self._reader_lock = Lock()
         self._loader_lock = Lock()
@@ -43,6 +169,9 @@ class Project(object):
         self._path = None
         self._project = project
         self.remote_storage = remote_storage
+        self.fingerprint = fingerprint
+        self.pull_models = pull_models
+        self.error_message = None
 
         if project and project_dir:
             self._path = os.path.join(project_dir, project)
@@ -83,8 +212,15 @@ class Project(object):
 
         return None  # local model loading failed!
 
-    def _dynamic_load_model(self, requested_model_name=None):
-        # type: (Text) -> Text
+    def _dynamic_load_model(self, requested_model_name: Text = None):
+
+        # If the Project was configured to pull models from a
+        # server, only one model is in memory at a time.
+        # Use this model if it exists.
+        if self.pull_models and requested_model_name is None:
+            for model, interpreter in self._models.items():
+                if interpreter is not None:
+                    return model
 
         # first try load from local cache
         local_model = self._load_local_model(requested_model_name)
@@ -105,10 +241,10 @@ class Project(object):
             return local_model
 
         # still not found user specified model
-        logger.warn("Invalid model requested. Using default")
+        logger.warning("Invalid model requested. Using default")
         return self._latest_project_model()
 
-    def parse(self, text, time=None, requested_model_name=None):
+    def parse(self, text, parsing_time=None, requested_model_name=None):
         self._begin_read()
 
         model_name = self._dynamic_load_model(requested_model_name)
@@ -121,7 +257,7 @@ class Project(object):
         finally:
             self._loader_lock.release()
 
-        response = self._models[model_name].parse(text, time)
+        response = self._models[model_name].parse(text, parsing_time)
         response['project'] = self._project
         response['model'] = model_name
 
@@ -141,6 +277,34 @@ class Project(object):
                 interpreter = self._interpreter_for_model(model_name)
                 self._models[model_name] = interpreter
                 status = True
+        finally:
+            self._loader_lock.release()
+
+        self._end_read()
+
+        return status
+
+    def update_model_from_dir_and_unload_others(self,
+                                                model_dir: Text,
+                                                model_name: Text
+                                                ) -> bool:
+        # unload all loaded models
+        for model in self._list_loaded_models():
+            self.unload(model)
+
+        self._begin_read()
+        # noinspection PyUnusedLocal
+        status = False
+
+        logger.debug("Loading model '{}' from directory '{}'.".format(
+            model_name, model_dir))
+
+        self._loader_lock.acquire()
+        try:
+            interpreter = self._interpreter_for_model(
+                model_name, model_dir)
+            self._models[model_name] = interpreter
+            status = True
         finally:
             self._loader_lock.release()
 
@@ -169,15 +333,15 @@ class Project(object):
                   for model in self._models.keys()
                   if model.startswith(MODEL_NAME_PREFIX)}
         if models:
-            time_list = [datetime.datetime.strptime(time, '%Y%m%d-%H%M%S')
-                         for time, model in models.items()]
+            time_list = [datetime.datetime.strptime(parse_time, '%Y%m%d-%H%M%S')
+                         for parse_time, model in models.items()]
             return models[max(time_list).strftime('%Y%m%d-%H%M%S')]
         else:
             return FALLBACK_MODEL_NAME
 
     def _fallback_model(self):
         meta = Metadata({"pipeline": [{
-            "name": "intent_classifier_keyword",
+            "name": "KeywordIntentClassifier",
             "class": utils.module_path_from_object(KeywordIntentClassifier())
         }]}, "")
         return Interpreter.create(meta, self._component_builder)
@@ -193,16 +357,18 @@ class Project(object):
                 if model not in self._models:
                     self._models[model] = None
 
-    def _interpreter_for_model(self, model_name):
-        metadata = self._read_model_metadata(model_name)
+    def _interpreter_for_model(self, model_name, model_dir=None):
+        metadata = self._read_model_metadata(model_name, model_dir)
         return Interpreter.create(metadata, self._component_builder)
 
-    def _read_model_metadata(self, model_name):
+    def _read_model_metadata(self, model_name, model_dir):
         if model_name is None:
             data = Project._default_model_metadata()
             return Metadata(data, model_name)
         else:
-            if not os.path.isabs(model_name) and self._path:
+            if model_dir is not None:
+                path = model_dir
+            elif not os.path.isabs(model_name) and self._path:
                 path = os.path.join(self._path, model_name)
             else:
                 path = model_name
@@ -214,10 +380,21 @@ class Project(object):
             return Metadata.load(path)
 
     def as_dict(self):
-        return {'status': 'training' if self.status else 'ready',
-                'current_training_processes': self.current_training_processes,
-                'available_models': list(self._models.keys()),
-                'loaded_models': self._list_loaded_models()}
+        status = "ready"
+        error_message = None
+        if self.status == STATUS_TRAINING:
+            status = 'training'
+        elif self.status == STATUS_FAILED:
+            status = 'failed'
+            error_message = self.error_message
+
+        return {
+            "status": status,
+            "error_message": error_message,
+            "current_training_processes": self.current_training_processes,
+            "available_models": list(self._models.keys()),
+            "loaded_models": self._list_loaded_models()
+        }
 
     def _list_loaded_models(self):
         models = []
@@ -226,8 +403,7 @@ class Project(object):
                 models.append(model)
         return models
 
-    def _list_models_in_cloud(self):
-        # type: () -> List[Text]
+    def _list_models_in_cloud(self) -> List[Text]:
 
         try:
             from rasa_nlu.persistor import get_persistor
@@ -237,8 +413,8 @@ class Project(object):
             else:
                 return []
         except Exception as e:
-            logger.warn("Failed to list models of project {}. "
-                        "{}".format(self._project, e))
+            logger.warning("Failed to list models of project {}. "
+                           "{}".format(self._project, e))
             return []
 
     def _load_model_from_cloud(self, model_name, target_path):
@@ -250,8 +426,8 @@ class Project(object):
             else:
                 raise RuntimeError("Unable to initialize persistor")
         except Exception as e:
-            logger.warn("Using default interpreter, couldn't fetch "
-                        "model: {}".format(e))
+            logger.warning("Using default interpreter, couldn't fetch "
+                           "model: {}".format(e))
             raise  # re-raise this exception because nothing we can do now
 
     @staticmethod

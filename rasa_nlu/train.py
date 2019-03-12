@@ -1,33 +1,21 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
 import argparse
 import logging
+from typing import Any, Optional, Text, Tuple, Union
 
-import typing
-from typing import Optional, Any
-from typing import Text
-from typing import Tuple
-
-from rasa_nlu import utils, config
+from rasa_nlu import config, utils
 from rasa_nlu.components import ComponentBuilder
 from rasa_nlu.config import RasaNLUModelConfig
-from rasa_nlu.model import Interpreter
-from rasa_nlu.model import Trainer
+from rasa_nlu.model import Interpreter, Trainer
 from rasa_nlu.training_data import load_data
-from rasa_nlu.training_data.loading import load_data_from_url
+from rasa_nlu.training_data.loading import load_data_from_endpoint
+from rasa_nlu.utils import EndpointConfig, read_endpoints
 
 logger = logging.getLogger(__name__)
-
-if typing.TYPE_CHECKING:
-    from rasa_nlu.persistor import Persistor
 
 
 def create_argument_parser():
     parser = argparse.ArgumentParser(
-            description='train a custom language parser')
+        description='train a custom language parser')
 
     parser.add_argument('-o', '--path',
                         default="models/nlu/",
@@ -45,6 +33,11 @@ def create_argument_parser():
     group.add_argument('-u', '--url',
                        default=None,
                        help="URL from which to retrieve training data.")
+
+    group.add_argument('--endpoints',
+                       default=None,
+                       help="EndpointConfig defining the server from which "
+                            "pull training data.")
 
     parser.add_argument('-c', '--config',
                         required=True,
@@ -91,8 +84,7 @@ class TrainingException(Exception):
         return self.message
 
 
-def create_persistor(persistor):
-    # type: (Optional[Text]) -> Optional[Persistor]
+def create_persistor(persistor: Optional[Text]):
     """Create a remote persistor to store the model if configured."""
 
     if persistor is not None:
@@ -102,50 +94,52 @@ def create_persistor(persistor):
         return None
 
 
-def do_train_in_worker(cfg,  # type: RasaNLUModelConfig
-                       data,  # type: Text
-                       path,  # type: Text
-                       project=None,  # type: Optional[Text]
-                       fixed_model_name=None,  # type: Optional[Text]
-                       storage=None,  # type: Text
-                       component_builder=None
-                       # type: Optional[ComponentBuilder]
+def do_train_in_worker(cfg: RasaNLUModelConfig,
+                       data: Text,
+                       path: Text,
+                       project: Optional[Text] = None,
+                       fixed_model_name: Optional[Text] = None,
+                       storage: Text = None,
+                       component_builder: Optional[ComponentBuilder] = None
+
                        ):
-    # type: (...) -> Text
     """Loads the trainer and the data and runs the training in a worker."""
 
     try:
-        _, _, persisted_path = do_train(cfg, data, path, project,
-                                        fixed_model_name, storage,
-                                        component_builder)
+        _, _, persisted_path = train(cfg, data, path, project,
+                                     fixed_model_name, storage,
+                                     component_builder)
         return persisted_path
     except BaseException as e:
         logger.exception("Failed to train project '{}'.".format(project))
         raise TrainingException(project, e)
 
 
-def do_train(cfg,  # type: RasaNLUModelConfig
-             data,  # type: Text
-             path=None,  # type: Optional[Text]
-             project=None,  # type: Optional[Text]
-             fixed_model_name=None,  # type: Optional[Text]
-             storage=None,  # type: Optional[Text]
-             component_builder=None,  # type: Optional[ComponentBuilder]
-             url=None,  # type: Optional[Text]
-             **kwargs  # type: Any
-             ):
-    # type: (...) -> Tuple[Trainer, Interpreter, Text]
+def train(nlu_config: Union[Text, RasaNLUModelConfig],
+          data: Text,
+          path: Optional[Text] = None,
+          project: Optional[Text] = None,
+          fixed_model_name: Optional[Text] = None,
+          storage: Optional[Text] = None,
+          component_builder: Optional[ComponentBuilder] = None,
+          training_data_endpoint: Optional[EndpointConfig] = None,
+          **kwargs: Any
+          ) -> Tuple[Trainer, Interpreter, Text]:
     """Loads the trainer and the data and runs the training of the model."""
+
+    if isinstance(nlu_config, str):
+        nlu_config = config.load(nlu_config)
 
     # Ensure we are training a model that we can save in the end
     # WARN: there is still a race condition if a model with the same name is
     # trained in another subprocess
-    trainer = Trainer(cfg, component_builder)
+    trainer = Trainer(nlu_config, component_builder)
     persistor = create_persistor(storage)
-    if url is not None:
-        training_data = load_data_from_url(url, cfg.language)
+    if training_data_endpoint is not None:
+        training_data = load_data_from_endpoint(training_data_endpoint,
+                                                nlu_config.language)
     else:
-        training_data = load_data(data, cfg.language)
+        training_data = load_data(data, nlu_config.language)
     interpreter = trainer.train(training_data, **kwargs)
 
     if path:
@@ -164,12 +158,17 @@ if __name__ == '__main__':
 
     utils.configure_colored_logging(cmdline_args.loglevel)
 
-    do_train(config.load(cmdline_args.config),
-             cmdline_args.data,
-             cmdline_args.path,
-             cmdline_args.project,
-             cmdline_args.fixed_model_name,
-             cmdline_args.storage,
-             url=cmdline_args.url,
-             num_threads=cmdline_args.num_threads)
+    if cmdline_args.url:
+        data_endpoint = EndpointConfig(cmdline_args.url)
+    else:
+        data_endpoint = read_endpoints(cmdline_args.endpoints).data
+
+    train(cmdline_args.config,
+          cmdline_args.data,
+          cmdline_args.path,
+          cmdline_args.project,
+          cmdline_args.fixed_model_name,
+          cmdline_args.storage,
+          training_data_endpoint=data_endpoint,
+          num_threads=cmdline_args.num_threads)
     logger.info("Finished training")

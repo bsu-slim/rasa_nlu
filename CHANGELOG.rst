@@ -4,19 +4,225 @@ Change Log
 All notable changes to this project will be documented in this file.
 This project adheres to `Semantic Versioning`_ starting with version 0.7.0.
 
-[Unreleased 0.13.0.aX] - `master`_
+[Unreleased 0.15.0.aX] - `master`_
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. note:: This version is not yet released and is under active development.
 
 Added
 -----
+- Added a detailed warning showing which entities are overlapping
+- Authentication token can be also set with env variable `RASA_NLU_TOKEN`.
+- `SpacyEntityExtractor` supports same entity filtering as `DucklingHTTPExtractor`
 
 Changed
 -------
+- validate training data only if used for training
+- applied spacy guidelines on how to disable pipeline components
+- starter packs now also tested when attempting to merge a branch to master
+- new consistent naming scheme for pipelines:
+  - ``tensorflow_embedding`` pipeline template renamed to ``supervised_embeddings``
+  - ``spacy_sklearn`` pipeline template renamed to ``pretrained_embeddings_spacy``
+  - requirements files, sample configs, and dockerfiles renamed accordingly
+- ``/train`` endpoint now returns a zipfile of the trained model.
+- pipeline components in the config file should be provided
+  with their class name
+- persisted components file name changed
+- replace pep8 with pycodestyle
+- ``Component.name`` property returns component's class name
+- Components ``load(...)``, ``create(...)`` and ``cache_key(...)`` methods
+  additionally take component's meta/config dicts
+- Components ``persist(...)`` method additionally takes file name prefix
+- renamed ``rasa_nlu.evaluate`` to ``rasa_nlu.test``
+- renamed ``rasa_nlu.test.run_cv_evaluation`` to
+  ``rasa_nlu.test.cross_validate``
+- renamed ``rasa_nlu.train.do_train()`` to ``rasa_nlu.train.train()``
+- train command can now also load config from file
 
 Removed
 -------
+- **removed python 2.7 support**
+
+Fixed
+-----
+- ``RegexFeaturizer`` detects all regex in user message (not just first)
+- do_extractors_support_overlap now correctly throws an exception only if no extractors are 
+  passed or if extractors that do not support overlapping entities are used.
+
+
+[0.14.3] - 2019-02-01
+^^^^^^^^^^^^^^^^^^^^^
+-
+
+Changed
+-------
+- starter packs are now tested in parallel with the unittests,
+  and only on branches ending in ``.x`` (i.e. new version releases)
+- pinned ``coloredlogs``, ``future`` and ``packaging``
+
+[0.14.2] - 2019-01-29
+^^^^^^^^^^^^^^^^^^^^^
+
+Added
+-----
+- ``rasa_nlu.evaluate`` now exports reports into a folder and also
+  includes the entity extractor reports
+
+Changed
+-------
+- updated requirements to match Core and SDK
+- pinned keras dependecies
+
+[0.14.1] - 2019-01-23
+^^^^^^^^^^^^^^^^^^^^^
+
+Fixed
+-----
+- scikit-learn is a global requirement
+
+.. _v0-14-0:
+
+[0.14.0] - 2019-01-23
+^^^^^^^^^^^^^^^^^^^^^
+
+Added
+-----
+- Ability to save successful predictions and classification results to a JSON
+  file from ``rasa_nlu.evaluate``
+- environment variables specified with ``${env_variable}`` in a yaml
+  configuration file are now replaced with the value of the environment
+  variable
+- more documentation on how to run NLU with Docker
+- ``analyzer`` parameter to ``intent_featurizer_count_vectors`` featurizer to
+  configure whether to use word or character n-grams
+- Travis script now clones and tests the Rasa NLU starter pack
+
+Changed
+-------
+- ``EmbeddingIntentClassifier`` has been refactored, including changes to the
+  config parameters as well as comments and types for all class functions.
+- the http server's ``POST /evaluate`` endpoint returns evaluation results
+  for both entities and intents
+- replaced ``yaml`` with ``ruamel.yaml``
+- updated spacy version to 2.0.18
+- updated TensorFlow version to 1.12.0
+- updated scikit-learn version to 0.20.2
+- updated cloudpickle version to 0.6.1
+- updated requirements to match Core and SDK
+- pinned keras dependecies
+
+Removed
+-------
+- ``/config`` endpoint
+- removed pinning of ``msgpack`` and unused package ``python-msgpack``
+- removed support for ``ner_duckling``. Now supports only ``ner_duckling_http``
+
+Fixed
+-----
+- Should loading jieba custom dictionaries only once.
+- Set attributes of custom components correctly if they defer from the default
+- NLU Server can now handle training data mit emojis in it
+- If the ``token_name`` is not given in the endpoint configuration, the default
+  value is ``token`` instead of ``None`
+- Throws error only if ``ner_crf`` picks up overlapping entities. If the
+  entity extractor supports overlapping entitis no error is thrown.
+- Updated CORS support for the server.
+  Added the ``Access-Control-Allow-Headers`` and ``Content-Type`` headers
+  for nlu server
+- parsing of emojis which are sent within jsons
+- Bad input shape error from ``sklearn_intent_classifier`` when using
+  ``scikit-learn==0.20.2``
+
+[0.13.8] - 2018-11-21
+^^^^^^^^^^^^^^^^^^^^^
+
+Fixed
+-----
+- pinned spacy version to ``spacy<=2.0.12,>2.0`` to avoid dependency conflicts
+  with tensorflow
+
+[0.13.7] - 2018-10-11`
+^^^^^^^^^^^^^^^^^^^^^
+
+Fixed
+-----
+- ``rasa_nlu.server`` allowed more than ``max_training_processes``
+  to be trained if they belong to different projects.
+  ``max_training_processes`` is now a global parameter, regardless of what
+  project the training process belongs to.
+
+
+[0.13.6] - 2018-10-04
+^^^^^^^^^^^^^^^^^^^^^
+
+Changed
+-------
+- ``boto3`` is now loaded lazily in ``AWSPersistor`` and is not
+  included in ``requirements_bare.txt`` anymore
+
+Fixed
+-----
+- Allow training of pipelines containing ``EmbeddingIntentClassifier`` in
+  a separate thread on python 3. This makes http server calls to ``/train``
+  non-blocking
+- require ``scikit-learn<0.20`` in setup py to avoid corrupted installations
+  with the most recent scikit learn
+
+
+[0.13.5] - 2018-09-28
+^^^^^^^^^^^^^^^^^^^^^
+
+Changed
+-------
+- Training data is now validated after loading from files in ``loading.py``
+  instead of on initialisation of ``TrainingData`` object
+
+Fixed
+-----
+- ``Project`` set up to pull models from a remote server only use
+  the pulled model instead of searching for models locally
+
+[0.13.4] - 2018-09-19
+^^^^^^^^^^^^^^^^^^^^^
+
+Fixed
+-----
+- pinned matplotlib to 2.x (not ready for 3.0 yet)
+- pytest-services since it wasn't used and caused issues on Windows
+
+[0.13.3] - 2018-08-28
+^^^^^^^^^^^^^^^^^^^^^
+
+Added
+-----
+- ``EndpointConfig`` class that handles authenticated requests
+  (ported from Rasa Core)
+- ``DataRouter()`` class supports a ``model_server`` ``EndpointConfig``,
+  which it regularly queries to fetch NLU models
+- this can be used with ``rasa_nlu.server`` with the ``--endpoint`` option
+  (the key for this the model server config is ``model``)
+- docs on model fetching from a URL
+- ability to specify lookup tables in training data
+
+Changed
+-------
+- loading training data from a URL requires an instance of ``EndpointConfig``
+
+- Changed evaluate behaviour to plot two histogram bars per bin.
+  Plotting confidence of right predictions in a wine-ish colour
+  and wrong ones in a blue-ish colour.
+
+Removed
+-------
+
+Fixed
+-----
+- re-added support for entity names with special characters in markdown format
+
+[0.13.2] - 2018-08-28
+^^^^^^^^^^^^^^^^^^^^^
+
+Changed
+-------
+- added information about migrating the CRF component from 0.12 to 0.13
 
 Fixed
 -----
@@ -33,6 +239,8 @@ Added
 Fixed
 -----
 - correctly pass reference time in miliseconds to duckling_http
+
+.. _v0-13-0:
 
 [0.13.0] - 2018-08-02
 ^^^^^^^^^^^^^^^^^^^^^
@@ -71,6 +279,7 @@ Added
 
 Changed
 -------
+- renamed CRF features ``wordX`` to ``suffixX`` and ``preX`` to ``suffixX``
 - L1 and L2 regularisation defaults in ``ner_crf`` both set to 0.1
 - ``whitespace_tokenizer`` ignores punctuation ``.,!?`` before
   whitespace or end of string
@@ -130,6 +339,7 @@ Fixed
 - improvements and fixes to the configuration and pipeline
   documentation
 
+.. _v0-12-0:
 
 [0.12.0] - 2018-04-17
 ^^^^^^^^^^^^^^^^^^^^^
@@ -213,6 +423,7 @@ Fixed
 - fixed project loading for newly added projects to a running server
 - fixed certain command line arguments not getting passed into the data_router
 
+.. _v0-11-0:
 
 [0.11.0] - 2018-01-30
 ^^^^^^^^^^^^^^^^^^^^^
@@ -291,6 +502,7 @@ Fixed
 - readme issues
 - improved setup py welcome message
 
+.. _v0-10-0:
 
 [0.10.0] - 2017-09-27
 ^^^^^^^^^^^^^^^^^^^^^
@@ -346,6 +558,7 @@ Fixed
 - removed obsolete ``--output`` parameter of ``train.py``.
   use ``--path`` instead. fixes #473
 
+.. _v0-9-0:
 
 [0.9.0] - 2017-07-07
 ^^^^^^^^^^^^^^^^^^^^
@@ -488,6 +701,7 @@ Fixed
 -----
 - NER training reuses context inbetween requests
 
+.. _v0-8-0:
 
 [0.8.0] - 2017-05-08
 ^^^^^^^^^^^^^^^^^^^^
@@ -586,6 +800,7 @@ Fixed
 - changed log file extension from ``.json`` to ``.log``,
   since the contained text is not proper json
 
+.. _v0-7-0:
 
 [0.7.0] - 2017-03-10
 ^^^^^^^^^^^^^^^^^^^^
@@ -603,7 +818,6 @@ Added
 - multithreading support of build in REST server (e.g. using gunicorn)
 - multitenancy implementation to allow loading multiple models which
   share the same backend
-
 Fixed
 -----
 - error propagation on failed vector model loading (spacy)
