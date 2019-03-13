@@ -457,20 +457,10 @@ class Incremental_Interpreter(Interpreter):
             component.new_utterance()
         self.message = Message(text="")
 
-    # def revoke_word(self):
-    #     prev_iu = self.message.get('incr_edit_message')
-    #     if prev_iu:
-    #         prev_iu = prev_iu[-1]
-    #         revoke_iu = (prev_iu[0], "revoke")
-    #         self.message.get('incr_edit_message').append(revoke_iu)
-    #         for component in self.pipeline:
-    #             component.process(self.message, **self.context)
-    #     return prev_iu
-
     # here, parse will be preserved but be breaking up the text into individual
     # words, then fed into the incremental component. This way, cmd-line
     # evaluation can be preserved without changes, and we can still evaluate
-    # an incremental component being evaluated from cmd-line.
+    # an incremental component from cmd-line.
     def parse(self, text, time=None, only_output_properties=True):
         self.new_utterance()
         for word in text.split():
