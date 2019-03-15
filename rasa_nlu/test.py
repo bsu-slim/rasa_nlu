@@ -13,7 +13,7 @@ from rasa_nlu import config, training_data, utils
 from rasa_nlu.config import RasaNLUModelConfig
 from rasa_nlu.extractors.crf_entity_extractor import CRFEntityExtractor
 from rasa_nlu.model import Interpreter, Trainer, TrainingData
-from rasa_nlu.model import Incremental_Interpreter
+from rasa_nlu.model import IncrementalInterpreter
 
 logger = logging.getLogger(__name__)
 
@@ -745,7 +745,7 @@ def run_evaluation(data_path, model,
     elif incremental is False:
         interpreter = Interpreter.load(model, component_builder)
     else:
-        interpreter = Incremental_Interpreter.load(model, component_builder)
+        interpreter = IncrementalInterpreter.load(model, component_builder)
 
     test_data = training_data.load_data(data_path,
                                         interpreter.model_metadata.language)

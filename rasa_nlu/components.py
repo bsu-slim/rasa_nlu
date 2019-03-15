@@ -352,7 +352,7 @@ class Component(object, metaclass=ComponentMetaclass):
         return language in cls.language_list
 
 
-class Incremental_Component(Component):
+class IncrementalComponent(Component):
     """Incremental Component requires new_utterance method.
 
     This function should prepare the component for a new utterance,

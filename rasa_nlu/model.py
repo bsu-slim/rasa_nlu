@@ -377,14 +377,14 @@ class Interpreter(object):
 
 # Programmatically with an explicitly listed incremental component.
 # Further documentation needed (TODO)
-class Incremental_Interpreter(Interpreter):
+class IncrementalInterpreter(Interpreter):
 
-    # must override load and create to return Incremental_Interpreter
+    # must override load and create to return IncrementalInterpreter
     # rather than Interpreter
     @staticmethod
     def load(model_dir: Text,
              component_builder: Optional[ComponentBuilder] = None,
-             skip_validation: bool = False) -> 'Incremental_Interpreter':
+             skip_validation: bool = False) -> 'IncrementalInterpreter':
         """Create an interpreter based on a persisted model.
 
         Args:
@@ -399,8 +399,8 @@ class Incremental_Interpreter(Interpreter):
         """
 
         model_metadata = Metadata.load(model_dir)
-        Incremental_Interpreter.ensure_model_compatibility(model_metadata)
-        return Incremental_Interpreter.create(model_metadata,
+        IncrementalInterpreter.ensure_model_compatibility(model_metadata)
+        return IncrementalInterpreter.create(model_metadata,
                                               component_builder,
                                               skip_validation)
 
@@ -408,7 +408,7 @@ class Incremental_Interpreter(Interpreter):
     def create(model_metadata: Metadata,
                component_builder: Optional[ComponentBuilder] = None,
                skip_validation: bool = False
-               ) -> 'Incremental_Interpreter':
+               ) -> 'IncrementalInterpreter':
         """Load stored model and components defined by the provided metadata."""
 
         context = {}
@@ -438,7 +438,7 @@ class Incremental_Interpreter(Interpreter):
             except components.MissingArgumentError as e:
                 raise Exception("Failed to initialize component '{}'. "
                                 "{}".format(component.name, e))
-        return Incremental_Interpreter(pipeline, context, model_metadata)
+        return IncrementalInterpreter(pipeline, context, model_metadata)
 
     # Overriding the init function to make message a variable contained in self
     # so that it can be preserved across multiple incremental_parse calls,

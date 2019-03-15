@@ -15,7 +15,7 @@ import os
 
 
 from rasa_nlu.classifiers import INTENT_RANKING_LENGTH
-from rasa_nlu.components import Incremental_Component
+from rasa_nlu.components import IncrementalComponent
 from rasa_nlu.config import RasaNLUModelConfig
 from rasa_nlu.model import Metadata
 from rasa_nlu.training_data import Message
@@ -23,7 +23,7 @@ from rasa_nlu.training_data import TrainingData
 from rasa_nlu.tokenizers import Tokenizer, Token
 
 
-class rasa_sium(Incremental_Component):
+class rasa_sium(IncrementalComponent):
     """A new component"""
 
     provides = ["intent", "intent_ranking", "entities", "tokens"]

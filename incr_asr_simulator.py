@@ -1,4 +1,4 @@
-from rasa_nlu.model import Incremental_Interpreter
+from rasa_nlu.model import IncrementalInterpreter
 import json
 import random
 
@@ -8,8 +8,8 @@ import random
 # a random add and revoke from the list below. It prints
 # the result of the parse at each step.
 
-interpreter = Incremental_Interpreter.load("./models/current/sium")
-random_revokes = ["restaurant", "italian", "playlist", "thai",
+interpreter = IncrementalInterpreter.load("./models/current/sium")
+random_revokes = ["restaurant", "italian", "playlist", "thaic
                   "store", "four", "movie", "showtime"]
 
 while 1:
