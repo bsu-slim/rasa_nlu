@@ -1,2 +1,2 @@
 pipeline:
-- name: "sium.siumComponent.RASA_SIUM"
+- name: "sium.siumComponent.rasa_sium"
