@@ -9,7 +9,7 @@ import random
 # the result of the parse at each step.
 
 interpreter = IncrementalInterpreter.load("./models/current/sium")
-random_revokes = ["restaurant", "italian", "playlist", "thaic
+random_revokes = ["restaurant", "italian", "playlist", "thai"
                   "store", "four", "movie", "showtime"]
 
 while 1:
