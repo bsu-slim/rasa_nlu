@@ -1,4 +1,4 @@
-from rasa_nlu.model import IncrementalInterpreter
+from rasa.nlu.model import IncrementalInterpreter
 import json
 import random
 
