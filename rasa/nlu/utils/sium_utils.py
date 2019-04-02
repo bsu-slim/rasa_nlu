@@ -16,7 +16,8 @@ class SIUM:
         add observations, then call train() then persist()
 
         to evaluate:
-        load() model, then call add_increment for each word in an utterance. Call new_utt() to start a new utterance
+        load() model, then call add_increment for each word in an utterance.
+        Call new_utt() to start a new utterance
     '''
     def __init__(self, model_name):
         self.prop_intent = {}
@@ -29,7 +30,8 @@ class SIUM:
 
     def add_word_to_property(self, prop, feats):
         '''
-        feats is a dict where the keys are prop types, and values are the props themselves
+        feats is a dict where the keys are prop types, and values are
+        the props themselves
         '''
         if prop not in self.word_prop:
             self.word_prop[prop] = list()
@@ -60,7 +62,8 @@ class SIUM:
             for i in self.context:
                 # this check is essentially P(R|I)
                 if r in self.context[i].values():
-                    # normalize for number of props, otherwise objects with more properties get higher overall probs
+                    # normalize for number of props, otherwise objects
+                    # with more properties get higher overall probs
                     p_u[i] = p_u[i] + p / len(self.context[i])
         # first time, there is no prior
         if self.current_utt == {}:
@@ -84,13 +87,14 @@ class SIUM:
         else:
             prev_state = self.previous_states.pop()
             self.current_utt = prev_state['current_utt']
-            self.context = prev_state['context']     
-        
+            self.context = prev_state['context']
+
     def get_current_prediction_state(self):
         return self.current_utt
 
     def get_predicted_intent(self):
-        return max(self.get_current_prediction_state().items(), key=itemgetter(1))
+        return max(self.get_current_prediction_state().items(),
+                   key=itemgetter(1))
 
     def set_context(self, context):
         '''

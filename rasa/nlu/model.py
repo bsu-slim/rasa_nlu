@@ -401,8 +401,8 @@ class IncrementalInterpreter(Interpreter):
         model_metadata = Metadata.load(model_dir)
         IncrementalInterpreter.ensure_model_compatibility(model_metadata)
         return IncrementalInterpreter.create(model_metadata,
-                                              component_builder,
-                                              skip_validation)
+                                             component_builder,
+                                             skip_validation)
 
     @staticmethod
     def create(model_metadata: Metadata,
