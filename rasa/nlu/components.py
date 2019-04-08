@@ -358,7 +358,7 @@ class IncrementalComponent(Component):
     This function should prepare the component for a new utterance,
     clearing internal states and preparing for new input."""
 
-    def new_utterance(self):
+    def new_utterance(self) -> None:
         pass
 
 

@@ -79,7 +79,7 @@ class rasa_sium(IncrementalComponent):
         self.sium.train()
 
     # clears the internal state
-    def new_utterance(self):
+    def new_utterance(self) -> None:
         self.sium.new_utt()
         self.extracted_entities = []
         self.tokens = []
@@ -176,7 +176,6 @@ class rasa_sium(IncrementalComponent):
                      for intent in intents_maxent_prob]
         return pred_intent, norm_rank
 
-    # why might this be happening?
     @classmethod
     def load(cls,
              meta: Dict[Text, Any],

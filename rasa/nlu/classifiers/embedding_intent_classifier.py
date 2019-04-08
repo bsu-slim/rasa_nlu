@@ -106,6 +106,9 @@ class EmbeddingIntentClassifier(Component):
         "evaluate_on_num_examples": 1000  # large values may hurt performance
     }
 
+    def new_utterance(self):
+        pass
+
     def __init__(self,
                  component_config: Optional[Dict[Text, Any]] = None,
                  inv_intent_dict: Optional[Dict[int, Text]] = None,
