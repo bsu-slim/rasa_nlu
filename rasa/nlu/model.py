@@ -7,6 +7,8 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Text
+import random
+import numpy
 
 import rasa.nlu
 from rasa.nlu import components, utils
@@ -457,6 +459,32 @@ class IncrementalInterpreter(Interpreter):
             component.new_utterance()
         self.message = Message(text="")
 
+    # testing that adding random words doesnt affect anything
+    def _inject_random(self, time=None):
+        rands = ["playlist", "alarm", "music", "movie", "showtime", "bye"]
+        choice = random.choice(rands)
+        iu_add = (choice, "add")
+        iu_revoke = (choice, "revoke")
+        pre_intent = self.message.get("intent").copy()
+        pre_feats = self.message.get("text_features").copy()
+        pre_intent_rank = self.message.get("intent_ranking").copy()
+        self.parse_incremental(iu_add, time)
+        self.parse_incremental(iu_revoke, time)
+        # print("!!!!")
+        # # print(self.message.get("iu_list "))
+        # print(pre_message.as_dict())
+        # print()
+        # print(self.message.as_dict())
+        assert(self.message.get("intent") == pre_intent)
+        # print(pre_message.get("te"))
+        # print()
+        # print(self.message.get("intent"))
+        assert(numpy.array_equal(self.message.get("text_features"), pre_feats))
+        # print(pre_message.get("intent_ranking"))
+        # print()
+        # print(self.message.get("intent_ranking"))
+        assert(self.message.get("intent_ranking") == pre_intent_rank)
+
     # here, parse will be preserved but be breaking up the text into individual
     # words, then fed into the incremental component. This way, cmd-line
     # evaluation can be preserved without changes, and we can still evaluate
@@ -465,6 +493,9 @@ class IncrementalInterpreter(Interpreter):
         self.new_utterance()
         for word in text.split():
             iu = (word, "add")
+            # if random.random() < 0.4:
+            #     if self.message.get('text_features') is not None:
+            #         self._inject_random(time)
             self.parse_incremental(iu, time)
         output = self.default_output_attributes()
         output.update(self.message.as_dict(
@@ -488,12 +519,12 @@ class IncrementalInterpreter(Interpreter):
             output["text"] = ""
             return output
 
-        # Initialize our incr_edit_message if this is the first
+        # Initialize our iu_list if this is the first
         # call to it.
-        if(self.message.get('incr_edit_message') is None):
-            self.message.set('incr_edit_message', list())
+        if(self.message.get('iu_list') is None):
+            self.message.set('iu_list', list())
 
-        self.message.get('incr_edit_message').append(iu)
+        self.message.get('iu_list').append(iu)
 
         for component in self.pipeline:
             component.process(self.message, **self.context)

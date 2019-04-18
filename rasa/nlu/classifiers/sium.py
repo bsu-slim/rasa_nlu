@@ -27,7 +27,6 @@ class rasa_sium(IncrementalComponent):
     """A new component"""
 
     provides = ["intent", "intent_ranking", "entities", "tokens"]
-    # TODO: require inc_iu_message
     requires = []
     defaults = {}
 
@@ -108,10 +107,10 @@ class rasa_sium(IncrementalComponent):
         # TODO: lowercase IU
 
         # The Latest IU is being appended to
-        # "incr_edit_message" in the message,
+        # "iu_list" in the message,
         # so we grab last one out of that.
-        inc_edit_message = message.get("incr_edit_message")
-        new_iu = inc_edit_message[-1]
+        iu_list = message.get("iu_list")
+        new_iu = iu_list[-1]
         # Extract into tuple of (word, type)
         # where type is either an "add" or "revoke".
         iu_word, iu_type = new_iu
@@ -119,7 +118,7 @@ class rasa_sium(IncrementalComponent):
         # and extract any entities if they meet our threshold.
         # We also have to keep track of our word offset for
         # the entities message.
-        if iu_type is "add":
+        if iu_type == "add":
             self.tokens.append(Token(iu_word, self.word_offset))
             props, prop_dist = self.sium.add_word_increment({"word": iu_word})
             for p in props:
@@ -134,7 +133,7 @@ class rasa_sium(IncrementalComponent):
                         'extractor': 'rasa_sium'
                     })
             self.word_offset += len(iu_word)
-        elif iu_type is "revoke":
+        elif iu_type == "revoke":
             # Need to undo everything above, remove tokens,
             # revoke word, remove extracted entities, subtract word_offset.
             self.word_offset -= len(iu_word)
@@ -148,6 +147,9 @@ class rasa_sium(IncrementalComponent):
                 if iu_word in last_entity.values():
                     self.extracted_entities.pop()
             self.sium.revoke()
+        else:
+            logger.error("incompatible iu type, expected 'add' or 'revoke',"
+                         " got '" + iu_type + "'")
         pred_intent, intent_ranks = self.__get_intents_and_ranks()
         message.set("intent", pred_intent, add_to_output=True)
         message.set("intent_ranking", intent_ranks)
