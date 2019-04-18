@@ -31,7 +31,9 @@ class IncrementalCVF(IncrementalComponent):
 
     @classmethod
     def required_packages(cls) -> List[Text]:
-        return CountVectorsFeaturizer.required_packages().append("numpy")
+        reqs = CountVectorsFeaturizer.required_packages()
+        reqs.append("numpy")
+        return reqs
 
     def __init__(self, component_config=None):
         super(IncrementalCVF, self).__init__(
@@ -77,8 +79,9 @@ class IncrementalCVF(IncrementalComponent):
                          " got '" + iu_type + "'")
 
     def _revoke(self, message):
+        # revoke on empty should do nothing
         if not self.prev_text_features:
-            pass
+            return
         else:
             prev_state = self.prev_text_features.pop()
             message.set("text_features", prev_state)
