@@ -377,12 +377,12 @@ class Interpreter(object):
         return output
 
 
-# Programmatically with an explicitly listed incremental component.
-# Further documentation needed (TODO)
+# Programmatic interface with an explicitly listed incremental component.
 class IncrementalInterpreter(Interpreter):
+    """Use a trained pipeline of components to parse text messages.
 
-    # must override load and create to return IncrementalInterpreter
-    # rather than Interpreter
+        This is for explicitly listed incremental components"""
+
     @staticmethod
     def load(model_dir: Text,
              component_builder: Optional[ComponentBuilder] = None,
@@ -442,12 +442,11 @@ class IncrementalInterpreter(Interpreter):
                                 "{}".format(component.name, e))
         return IncrementalInterpreter(pipeline, context, model_metadata)
 
-    # Overriding the init function to make message a variable contained in self
-    # so that it can be preserved across multiple incremental_parse calls,
-    # self.message is initialized in init, and get modified with each parse
-    # call until it is eventually cleared when new_utterance is called
     def __init__(self, pipeline, context, model_metadata=None):
+
         super().__init__(pipeline, context, model_metadata)
+        # self.message is initialized in init, and get modified with each parse
+        # call until it is eventually cleared when new_utterance is called
         # TODO: assert that every compoenent in the pipeline is incremental
         self.message = Message(text="")
 
@@ -455,61 +454,44 @@ class IncrementalInterpreter(Interpreter):
     # this will tell the incremental components to clear their
     # internal states and start clean.
     def new_utterance(self):
+        """ Tells the component that a new utterance is about to begin
+
+        This clears a components internal state and resets the Message """
+
         for component in self.pipeline:
             component.new_utterance()
         self.message = Message(text="")
 
-    # testing that adding random words doesnt affect anything
-    def _inject_random(self, time=None):
-        rands = ["playlist", "alarm", "music", "movie", "showtime", "bye"]
-        choice = random.choice(rands)
-        iu_add = (choice, "add")
-        iu_revoke = (choice, "revoke")
-        pre_intent = self.message.get("intent").copy()
-        pre_feats = self.message.get("text_features").copy()
-        pre_intent_rank = self.message.get("intent_ranking").copy()
-        self.parse_incremental(iu_add, time)
-        self.parse_incremental(iu_revoke, time)
-        # print("!!!!")
-        # # print(self.message.get("iu_list "))
-        # print(pre_message.as_dict())
-        # print()
-        # print(self.message.as_dict())
-        assert(self.message.get("intent") == pre_intent)
-        # print(pre_message.get("te"))
-        # print()
-        # print(self.message.get("intent"))
-        assert(numpy.array_equal(self.message.get("text_features"), pre_feats))
-        # print(pre_message.get("intent_ranking"))
-        # print()
-        # print(self.message.get("intent_ranking"))
-        assert(self.message.get("intent_ranking") == pre_intent_rank)
-
-    # here, parse will be preserved but be breaking up the text into individual
-    # words, then fed into the incremental component. This way, cmd-line
-    # evaluation can be preserved without changes, and we can still evaluate
-    # an incremental component from cmd-line.
     def parse(self, text, time=None, only_output_properties=True):
+        """ Parse the input text, classify it and return pipeline result.
+
+        This should only be called for command line evaluation of an
+        incremental component, otherwise, use parse_incremental.
+
+        Text is split into word-level increments and subsequently calls
+        parse_incremental for each word to evaluate incremental components. """
         self.new_utterance()
+        # split the text into words, and pass them through as
+        # "add" incremental units to parse_incremental
         for word in text.split():
             iu = (word, "add")
-            # if random.random() < 0.4:
-            #     if self.message.get('text_features') is not None:
-            #         self._inject_random(time)
             self.parse_incremental(iu, time)
         output = self.default_output_attributes()
         output.update(self.message.as_dict(
                       only_output_properties=only_output_properties))
         return output
 
-    # new_utterance should be called before each new utterance, and that
-    # component will be responsible for clearing its internal state.
-    # However, the message is responsible for clearing/restarting the
-    # message object iu parameter is a tuple in the form of (word, type),
-    # where word is the word being passed by the asr, and type is of either
-    # "add" or "revoke". This just puts the iu on the message bus, and the
-    # component has the responsibility of handling adds or revokes.
     def parse_incremental(self, iu, time=None, only_output_properties=True):
+        """ Parse the incremental unit through the pipeline of trained
+        incremental components.
+
+        new_utterance should be called before each new query.
+
+        Arg:
+            iu: Incremental Unit. This can be anything as long as the
+                pipeline can handle it. The default for sium and restart-
+                incremental embeddings is a tuple of format (word, operation),
+                Where operation is either "add" or "revoke" """
         if not iu:
             # Not all components are able to handle empty strings. So we need
             # to prevent that... This default return will not contain all
@@ -524,10 +506,15 @@ class IncrementalInterpreter(Interpreter):
         if(self.message.get('iu_list') is None):
             self.message.set('iu_list', list())
 
+        # add our IU
         self.message.get('iu_list').append(iu)
 
+        # Call each component's process() function. Recall that
+        # incremental components should expect multiple calls to
+        # process() per utterance, one per IU.
         for component in self.pipeline:
             component.process(self.message, **self.context)
+
         output = self.default_output_attributes()
         output.update(self.message.as_dict(
                 only_output_properties=only_output_properties))
