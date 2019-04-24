@@ -40,10 +40,11 @@ class IncrementalCVF(IncrementalComponent):
             component_config)
 
         self.CVF = CountVectorsFeaturizer()
-        self.Messages = []
 
+    # we don't have anything to clear since our featuers are storeed
+    # in the Message, which the IncrementalInterpreter clears.
     def new_utterance(self) -> None:
-        self.prev_text_features = []
+        return
 
     def train(self,
               training_data: TrainingData,
@@ -62,29 +63,38 @@ class IncrementalCVF(IncrementalComponent):
         else:
             return additional_features
 
+    # On revoke, remove the word's features from the vector
+    def _sub_text_features(self, message, to_sub):
+        if message.get("text_features") is not None:
+            return np.subtract(message.get("text_features"), to_sub)
+        else:
+            logger.error("Nothing in text features, cannot subtract")
+
     # assuming not using spacy_doc or tokens, so just setting message.text
     def process(self, message: Message, **kwargs: Any) -> None:
         iu_list = message.get('iu_list')
         last_iu = iu_list[-1]
         iu_word, iu_type = last_iu
         if iu_type == "add":
-            self.prev_text_features.append(message.get("text_features"))
             bag = self.CVF.vect.transform([iu_word]).toarray().squeeze()
             return message.set("text_features",
                                self._add_text_features(message, bag))
         elif iu_type == "revoke":
-            return self._revoke(message)
+            return self._revoke(message, iu_word)
         else:
             logger.error("incompatible iu type, expected 'add' or 'revoke',"
                          " got '" + iu_type + "'")
 
-    def _revoke(self, message):
+    # TODO: can we just subtract the vector instead of
+    # storing previous features?
+    def _revoke(self, message, word):
         # revoke on empty should do nothing
-        if not self.prev_text_features:
+        if message.get("text_features") is not None:
             return
         else:
-            prev_state = self.prev_text_features.pop()
-            message.set("text_features", prev_state)
+            bag = self.CVF.vect.transform([word]).toarray().squeeze()
+            return message.set("text_features",
+                               self._sub_text_features(message, bag))
 
     def persist(self,
                 file_name: Text,
