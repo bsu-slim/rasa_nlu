@@ -122,39 +122,40 @@ class IncrementalEIC(IncrementalComponent):
             checkpoint = os.path.join(model_dir, file_name + ".ckpt")
             graph = tf.Graph()
             with graph.as_default():
-                sess = tf.Session()
-                saver = tf.train.import_meta_graph(checkpoint + '.meta')
+                session = tf.compat.v1.Session(config=_tf_config)
+                saver = tf.compat.v1.train.import_meta_graph(checkpoint + ".meta")
 
-                saver.restore(sess, checkpoint)
+                saver.restore(session, checkpoint)
 
-                a_in = tf.get_collection('message_placeholder')[0]
-                b_in = tf.get_collection('intent_placeholder')[0]
+                a_in = train_utils.load_tensor("message_placeholder")
+                b_in = train_utils.load_tensor("label_placeholder")
 
-                sim_op = tf.get_collection('similarity_op')[0]
+                sim_all = train_utils.load_tensor("similarity_all")
+                pred_confidence = train_utils.load_tensor("pred_confidence")
+                sim = train_utils.load_tensor("similarity")
 
-                word_embed = tf.get_collection('word_embed')[0]
-                intent_embed = tf.get_collection('intent_embed')[0]
+                message_embed = train_utils.load_tensor("message_embed")
+                label_embed = train_utils.load_tensor("label_embed")
+                all_labels_embed = train_utils.load_tensor("all_labels_embed")
 
-            with io.open(os.path.join(
-                    model_dir,
-                    file_name + "_inv_intent_dict.pkl"), 'rb') as f:
-                inv_intent_dict = pickle.load(f)
-            with io.open(os.path.join(
-                    model_dir,
-                    file_name + "_encoded_all_intents.pkl"), 'rb') as f:
-                encoded_all_intents = pickle.load(f)
+            with open(
+                os.path.join(model_dir, file_name + ".inv_label_dict.pkl"), "rb"
+            ) as f:
+                inv_label_dict = pickle.load(f)
 
             return cls(
                 component_config=meta,
-                inv_intent_dict=inv_intent_dict,
-                encoded_all_intents=encoded_all_intents,
-                session=sess,
+                inverted_label_dict=inv_label_dict,
+                session=session,
                 graph=graph,
                 message_placeholder=a_in,
-                intent_placeholder=b_in,
-                similarity_op=sim_op,
-                word_embed=word_embed,
-                intent_embed=intent_embed
+                label_placeholder=b_in,
+                similarity_all=sim_all,
+                pred_confidence=pred_confidence,
+                similarity=sim,
+                message_embed=message_embed,
+                label_embed=label_embed,
+                all_labels_embed=all_labels_embed,
             )
         else:
             logger.warning("Failed to load nlu model. Maybe path {} "
