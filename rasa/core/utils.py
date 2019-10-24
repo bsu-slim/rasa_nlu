@@ -1,31 +1,40 @@
 # -*- coding: utf-8 -*-
 import argparse
-import asyncio
-import errno
 import json
 import logging
 import os
 import re
 import sys
-import tarfile
-import tempfile
-import warnings
-import zipfile
-from asyncio import AbstractEventLoop, Future
+from asyncio import Future
+from decimal import Decimal
 from hashlib import md5, sha1
-from io import BytesIO as IOReader, StringIO
+from io import StringIO
+from pathlib import Path
 from typing import (
-    Any, Dict, List, Optional, Set, TYPE_CHECKING, Text, Tuple,
-    Callable)
+    Any,
+    Dict,
+    List,
+    Optional,
+    Set,
+    TYPE_CHECKING,
+    Text,
+    Tuple,
+    Callable,
+    Union,
+)
 
 import aiohttp
 from aiohttp import InvalidURL
-from requests.exceptions import InvalidURL
 from sanic import Sanic
-from sanic.request import Request
 from sanic.views import CompositionView
 
-from rasa.core.constants import DEFAULT_REQUEST_TIMEOUT
+import rasa.utils.io as io_utils
+from rasa.constants import ENV_SANIC_WORKERS, DEFAULT_SANIC_WORKERS
+
+# backwards compatibility 1.0.x
+# noinspection PyUnresolvedReferences
+from rasa.core.lock_store import LockStore, RedisLockStore
+from rasa.utils.endpoints import EndpointConfig, read_endpoint_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,40 +42,15 @@ if TYPE_CHECKING:
     from random import Random
 
 
-def configure_file_logging(loglevel, logfile):
-    if logfile:
-        fh = logging.FileHandler(logfile, encoding='utf-8')
-        fh.setLevel(loglevel)
-        logging.getLogger('').addHandler(fh)
-    logging.captureWarnings(True)
+def configure_file_logging(logger_obj: logging.Logger, log_file: Optional[Text]):
+    if not log_file:
+        return
 
-
-# noinspection PyUnresolvedReferences
-def class_from_module_path(module_path: Text,
-                           lookup_path: Optional[Text] = None) -> Any:
-    """Given the module name and path of a class, tries to retrieve the class.
-
-    The loaded class can be used to instantiate new objects. """
-    import importlib
-
-    # load the module, will raise ImportError if module cannot be loaded
-    if "." in module_path:
-        module_name, _, class_name = module_path.rpartition('.')
-        m = importlib.import_module(module_name)
-        # get the class, will raise AttributeError if class cannot be found
-        return getattr(m, class_name)
-    else:
-        module = globals().get(module_path, locals().get(module_path))
-        if module is not None:
-            return module
-
-        if lookup_path:
-            # last resort: try to import the class from the lookup path
-            m = importlib.import_module(lookup_path)
-            return getattr(m, module_path)
-        else:
-            raise ImportError("Cannot retrieve class from path {}."
-                              "".format(module_path))
+    formatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
+    file_handler = logging.FileHandler(log_file, encoding=io_utils.DEFAULT_ENCODING)
+    file_handler.setLevel(logger_obj.level)
+    file_handler.setFormatter(formatter)
+    logger_obj.addHandler(file_handler)
 
 
 def module_path_from_instance(inst: Any) -> Text:
@@ -74,24 +58,12 @@ def module_path_from_instance(inst: Any) -> Text:
     return inst.__module__ + "." + inst.__class__.__name__
 
 
-def dump_obj_as_json_to_file(filename: Text, obj: Any) -> None:
-    """Dump an object as a json string to a file."""
-
-    dump_obj_as_str_to_file(filename, json.dumps(obj, indent=2))
-
-
-def dump_obj_as_str_to_file(filename: Text, text: Text) -> None:
-    """Dump a text to a file."""
-
-    with open(filename, 'w', encoding="utf-8") as f:
-        # noinspection PyTypeChecker
-        f.write(str(text))
-
-
-def subsample_array(arr: List[Any],
-                    max_values: int,
-                    can_modify_incoming_array: bool = True,
-                    rand: Optional['Random'] = None) -> List[Any]:
+def subsample_array(
+    arr: List[Any],
+    max_values: int,
+    can_modify_incoming_array: bool = True,
+    rand: Optional["Random"] = None,
+) -> List[Any]:
     """Shuffles the array and returns `max_values` number of elements."""
     import random
 
@@ -116,40 +88,14 @@ def is_int(value: Any) -> bool:
         return False
 
 
-def lazyproperty(fn):
-    """Allows to avoid recomputing a property over and over.
-
-    Instead the result gets stored in a local var. Computation of the property
-    will happen once, on the first call of the property. All succeeding calls
-    will use the value stored in the private property."""
-
-    attr_name = '_lazy_' + fn.__name__
-
-    @property
-    def _lazyprop(self):
-        if not hasattr(self, attr_name):
-            setattr(self, attr_name, fn(self))
-        return getattr(self, attr_name)
-
-    return _lazyprop
-
-
-def create_dir_for_file(file_path: Text) -> None:
-    """Creates any missing parent directories of this files path."""
-
-    try:
-        os.makedirs(os.path.dirname(file_path))
-    except OSError as e:
-        # be happy if someone already created the path
-        if e.errno != errno.EEXIST:
-            raise
-
-
 def one_hot(hot_idx, length, dtype=None):
     import numpy
+
     if hot_idx >= length:
-        raise ValueError("Can't create one hot. Index '{}' is out "
-                         "of range (length '{}')".format(hot_idx, length))
+        raise ValueError(
+            "Can't create one hot. Index '{}' is out "
+            "of range (length '{}')".format(hot_idx, length)
+        )
     r = numpy.zeros(length, dtype)
     r[hot_idx] = 1
     return r
@@ -161,6 +107,7 @@ def str_range_list(start, end):
 
 def generate_id(prefix="", max_chars=None):
     import uuid
+
     gid = uuid.uuid4().hex
     if max_chars:
         gid = gid[:max_chars]
@@ -170,9 +117,12 @@ def generate_id(prefix="", max_chars=None):
 
 def request_input(valid_values=None, prompt=None, max_suggested=3):
     def wrong_input_message():
-        print("Invalid answer, only {}{} allowed\n".format(
-            ", ".join(valid_values[:max_suggested]),
-            ",..." if len(valid_values) > max_suggested else ""))
+        print(
+            "Invalid answer, only {}{} allowed\n".format(
+                ", ".join(valid_values[:max_suggested]),
+                ",..." if len(valid_values) > max_suggested else "",
+            )
+        )
 
     while True:
         try:
@@ -240,47 +190,6 @@ class HashableNDArray(object):
         return self.__wrapped
 
 
-def replace_environment_variables():
-    """Enable yaml loader to process the environment variables in the yaml."""
-    import ruamel.yaml as yaml
-    import re
-    import os
-
-    # eg. ${USER_NAME}, ${PASSWORD}
-    env_var_pattern = re.compile(r'^(.*)\$\{(.*)\}(.*)$')
-    yaml.add_implicit_resolver('!env_var', env_var_pattern)
-
-    def env_var_constructor(loader, node):
-        """Process environment variables found in the YAML."""
-        value = loader.construct_scalar(node)
-        expanded_vars = os.path.expandvars(value)
-        if '$' in expanded_vars:
-            not_expanded = [w for w in expanded_vars.split() if '$' in w]
-            raise ValueError(
-                "Error when trying to expand the environment variables"
-                " in '{}'. Please make sure to also set these environment"
-                " variables: '{}'.".format(value, not_expanded))
-        return expanded_vars
-
-    yaml.SafeConstructor.add_constructor(u'!env_var', env_var_constructor)
-
-
-def read_yaml_file(filename: Text) -> Dict[Text, Any]:
-    """Read contents of `filename` interpreting them as yaml."""
-    return read_yaml_string(read_file(filename))
-
-
-def read_yaml_string(string: Text) -> Dict[Text, Any]:
-    replace_environment_variables()
-    import ruamel.yaml
-
-    yaml_parser = ruamel.yaml.YAML(typ="safe")
-    yaml_parser.version = "1.1"
-    yaml_parser.unicode_supplementary = True
-
-    return yaml_parser.load(string) or {}
-
-
 def _dump_yaml(obj, output):
     import ruamel.yaml
 
@@ -292,29 +201,17 @@ def _dump_yaml(obj, output):
     yaml_writer.dump(obj, output)
 
 
-def dump_obj_as_yaml_to_file(filename, obj):
+def dump_obj_as_yaml_to_file(filename: Union[Text, Path], obj: Dict) -> None:
     """Writes data (python dict) to the filename in yaml repr."""
-    with open(filename, 'w', encoding="utf-8") as output:
-        _dump_yaml(obj, output)
+
+    io_utils.write_yaml_file(obj, filename)
 
 
-def dump_obj_as_yaml_to_string(obj):
+def dump_obj_as_yaml_to_string(obj: Dict) -> Text:
     """Writes data (python dict) to a yaml string."""
     str_io = StringIO()
     _dump_yaml(obj, str_io)
     return str_io.getvalue()
-
-
-def read_file(filename, encoding="utf-8"):
-    """Read text from a file."""
-    with open(filename, encoding=encoding) as f:
-        return f.read()
-
-
-def read_json_file(filename):
-    """Read json from a file"""
-    with open(filename) as f:
-        return json.load(f)
 
 
 def list_routes(app: Sanic):
@@ -322,11 +219,12 @@ def list_routes(app: Sanic):
 
     Mainly used for debugging."""
     from urllib.parse import unquote
+
     output = {}
 
     def find_route(suffix, path):
         for name, (uri, _) in app.router.routes_names.items():
-            if name.endswith(suffix) and uri == path:
+            if name.split(".")[-1] == suffix and uri == path:
                 return name
         return None
 
@@ -341,12 +239,13 @@ def list_routes(app: Sanic):
         if not isinstance(route.handler, CompositionView):
             handlers = [(list(route.methods)[0], route.name)]
         else:
-            handlers = [(method, find_route(v.__name__, endpoint) or v.__name__)
-                        for method, v in route.handler.handlers.items()]
+            handlers = [
+                (method, find_route(v.__name__, endpoint) or v.__name__)
+                for method, v in route.handler.handlers.items()
+            ]
 
         for method, name in handlers:
-            line = unquote(
-                "{:50s} {:30s} {}".format(endpoint, method, name))
+            line = unquote("{:50s} {:30s} {}".format(endpoint, method, name))
             output[name] = line
 
     url_table = "\n".join(output[url] for url in sorted(output))
@@ -355,101 +254,23 @@ def list_routes(app: Sanic):
     return output
 
 
-def zip_folder(folder):
-    """Create an archive from a folder."""
-    import shutil
-
-    zipped_path = tempfile.NamedTemporaryFile(delete=False)
-    zipped_path.close()
-
-    # WARN: not thread save!
-    return shutil.make_archive(zipped_path.name, str("zip"), folder)
-
-
-def unarchive(byte_array: bytes, directory: Text) -> Text:
-    """Tries to unpack a byte array interpreting it as an archive.
-
-    Tries to use tar first to unpack, if that fails, zip will be used."""
-
-    try:
-        tar = tarfile.open(fileobj=IOReader(byte_array))
-        tar.extractall(directory)
-        tar.close()
-        return directory
-    except tarfile.TarError:
-        zip_ref = zipfile.ZipFile(IOReader(byte_array))
-        zip_ref.extractall(directory)
-        zip_ref.close()
-        return directory
-
-
 def cap_length(s, char_limit=20, append_ellipsis=True):
     """Makes sure the string doesn't exceed the passed char limit.
 
-    Appends an ellipsis if the string is to long."""
+    Appends an ellipsis if the string is too long."""
 
     if len(s) > char_limit:
         if append_ellipsis:
-            return s[:char_limit - 3] + "..."
+            return s[: char_limit - 3] + "..."
         else:
             return s[:char_limit]
     else:
         return s
 
 
-def write_request_body_to_file(request: Request, path: Text):
-    """Writes the body of `request` to `path`."""
-
-    with open(path, 'w+b') as f:
-        f.write(request.body)
-
-
-def bool_arg(request: Request, name: Text, default: bool = True) -> bool:
-    """Return a passed boolean argument of the request or a default.
-
-    Checks the `name` parameter of the request if it contains a valid
-    boolean value. If not, `default` is returned."""
-
-    return default_arg(request, name, str(default)).lower() == 'true'
-
-
-def float_arg(request: Request,
-              key: Text,
-              default: Optional[float] = None) -> Optional[float]:
-    """Return a passed argument cast as a float or None.
-
-    Checks the `name` parameter of the request if it contains a valid
-    float value. If not, `None` is returned."""
-
-    arg = default_arg(request, key, default)
-
-    if arg is default:
-        return arg
-
-    try:
-        return float(arg)
-    except (ValueError, TypeError):
-        logger.warning("Failed to convert '{}' to float.".format(arg))
-        return default
-
-
-def default_arg(request: Request,
-                key: Text,
-                default: Any = None) -> Optional[Any]:
-    """Return an argument of the request or a default.
-
-    Checks the `name` parameter of the request if it contains a value.
-    If not, `default` is returned."""
-    found = request.raw_args.get(key)
-    if found is not None:
-        return found
-    else:
-        return default
-
-
-def extract_args(kwargs: Dict[Text, Any],
-                 keys_to_extract: Set[Text]
-                 ) -> Tuple[Dict[Text, Any], Dict[Text, Any]]:
+def extract_args(
+    kwargs: Dict[Text, Any], keys_to_extract: Set[Text]
+) -> Tuple[Dict[Text, Any], Dict[Text, Any]]:
     """Go through the kwargs and filter out the specified keys.
 
     Return both, the filtered kwargs as well as the remaining kwargs."""
@@ -465,51 +286,12 @@ def extract_args(kwargs: Dict[Text, Any],
     return extracted, remaining
 
 
-def arguments_of(func):
-    """Return the parameters of the function `func` as a list of names."""
-    import inspect
-
-    return list(inspect.signature(func).parameters.keys())
-
-
-def concat_url(base: Text, subpath: Optional[Text]) -> Text:
-    """Append a subpath to a base url.
-
-    Strips leading slashes from the subpath if necessary. This behaves
-    differently than `urlparse.urljoin` and will not treat the subpath
-    as a base url if it starts with `/` but will always append it to the
-    `base`."""
-
-    if subpath:
-        url = base
-        if not base.endswith("/"):
-            url += "/"
-        if subpath.startswith("/"):
-            subpath = subpath[1:]
-        return url + subpath
-    else:
-        return base
-
-
 def all_subclasses(cls: Any) -> List[Any]:
     """Returns all known (imported) subclasses of a class."""
 
-    return cls.__subclasses__() + [g for s in cls.__subclasses__()
-                                   for g in all_subclasses(s)]
-
-
-def read_endpoint_config(filename: Text,
-                         endpoint_type: Text) -> Optional['EndpointConfig']:
-    """Read an endpoint configuration file from disk and extract one config."""
-
-    if not filename:
-        return None
-
-    content = read_yaml_file(filename)
-    if endpoint_type in content:
-        return EndpointConfig.from_dict(content[endpoint_type])
-    else:
-        return None
+    return cls.__subclasses__() + [
+        g for s in cls.__subclasses__() for g in all_subclasses(s)
+    ]
 
 
 def is_limit_reached(num_messages, limit):
@@ -521,7 +303,7 @@ def read_lines(filename, max_line_limit=None, line_pattern=".*"):
 
     line_filter = re.compile(line_pattern)
 
-    with open(filename, 'r', encoding="utf-8") as f:
+    with open(filename, "r", encoding=io_utils.DEFAULT_ENCODING) as f:
         num_messages = 0
         for line in f:
             m = line_filter.match(line)
@@ -535,8 +317,17 @@ def read_lines(filename, max_line_limit=None, line_pattern=".*"):
 
 def file_as_bytes(path: Text) -> bytes:
     """Read in a file as a byte array."""
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         return f.read()
+
+
+def convert_bytes_to_string(data: Union[bytes, bytearray, Text]) -> Text:
+    """Convert `data` to string if it is a bytes-like object."""
+
+    if isinstance(data, (bytes, bytearray)):
+        return data.decode(io_utils.DEFAULT_ENCODING)
+
+    return data
 
 
 def get_file_hash(path: Text) -> Text:
@@ -544,9 +335,14 @@ def get_file_hash(path: Text) -> Text:
     return md5(file_as_bytes(path)).hexdigest()
 
 
-def get_text_hash(text: Text, encoding: Text = "utf-8") -> Text:
-    """Calculate the md5 hash of a file."""
+def get_text_hash(text: Text, encoding: Text = io_utils.DEFAULT_ENCODING) -> Text:
+    """Calculate the md5 hash for a text."""
     return md5(text.encode(encoding)).hexdigest()
+
+
+def get_dict_hash(data: Dict, encoding: Text = io_utils.DEFAULT_ENCODING) -> Text:
+    """Calculate the md5 hash of a dictionary."""
+    return md5(json.dumps(data, sort_keys=True).encode(encoding)).hexdigest()
 
 
 async def download_file_from_url(url: Text) -> Text:
@@ -561,8 +357,7 @@ async def download_file_from_url(url: Text) -> Text:
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, raise_for_status=True) as resp:
-            filename = nlu_utils.create_temporary_file(await resp.read(),
-                                                       mode="w+b")
+            filename = io_utils.create_temporary_file(await resp.read(), mode="w+b")
 
     return filename
 
@@ -572,9 +367,19 @@ def remove_none_values(obj: Dict[Text, Any]) -> Dict[Text, Any]:
     return {k: v for k, v in obj.items() if v is not None}
 
 
-def pad_list_to_size(_list, size, padding_value=None):
-    """Pads _list with padding_value up to size"""
-    return _list + [padding_value] * (size - len(_list))
+def pad_lists_to_size(
+    list_x: List, list_y: List, padding_value: Optional[Any] = None
+) -> Tuple[List, List]:
+    """Compares list sizes and pads them to equal length."""
+
+    difference = len(list_x) - len(list_y)
+
+    if difference > 0:
+        return list_x, list_y + [padding_value] * difference
+    elif difference < 0:
+        return list_x + [padding_value] * (-difference), list_y
+    else:
+        return list_x, list_y
 
 
 class AvailableEndpoints(object):
@@ -582,149 +387,46 @@ class AvailableEndpoints(object):
 
     @classmethod
     def read_endpoints(cls, endpoint_file):
-        nlg = read_endpoint_config(
-            endpoint_file, endpoint_type="nlg")
-        nlu = read_endpoint_config(
-            endpoint_file, endpoint_type="nlu")
-        action = read_endpoint_config(
-            endpoint_file, endpoint_type="action_endpoint")
-        model = read_endpoint_config(
-            endpoint_file, endpoint_type="models")
+        nlg = read_endpoint_config(endpoint_file, endpoint_type="nlg")
+        nlu = read_endpoint_config(endpoint_file, endpoint_type="nlu")
+        action = read_endpoint_config(endpoint_file, endpoint_type="action_endpoint")
+        model = read_endpoint_config(endpoint_file, endpoint_type="models")
         tracker_store = read_endpoint_config(
-            endpoint_file, endpoint_type="tracker_store")
-        event_broker = read_endpoint_config(
-            endpoint_file, endpoint_type="event_broker")
+            endpoint_file, endpoint_type="tracker_store"
+        )
+        lock_store = read_endpoint_config(endpoint_file, endpoint_type="lock_store")
+        event_broker = read_endpoint_config(endpoint_file, endpoint_type="event_broker")
 
-        return cls(nlg, nlu, action, model, tracker_store, event_broker)
+        return cls(nlg, nlu, action, model, tracker_store, lock_store, event_broker)
 
-    def __init__(self,
-                 nlg=None,
-                 nlu=None,
-                 action=None,
-                 model=None,
-                 tracker_store=None,
-                 event_broker=None):
+    def __init__(
+        self,
+        nlg=None,
+        nlu=None,
+        action=None,
+        model=None,
+        tracker_store=None,
+        lock_store=None,
+        event_broker=None,
+    ):
         self.model = model
         self.action = action
         self.nlu = nlu
         self.nlg = nlg
         self.tracker_store = tracker_store
+        self.lock_store = lock_store
         self.event_broker = event_broker
 
 
-class ClientResponseError(aiohttp.ClientError):
-    def __init__(self, status, message, text):
-        self.status = status
-        self.message = message
-        self.text = text
-        super().__init__("{}, {}, body='{}'".format(status, message, text))
-
-
-class EndpointConfig(object):
-    """Configuration for an external HTTP endpoint."""
-
-    def __init__(self, url=None, params=None, headers=None, basic_auth=None,
-                 token=None, token_name="token", **kwargs):
-        self.url = url
-        self.params = params if params else {}
-        self.headers = headers if headers else {}
-        self.basic_auth = basic_auth
-        self.token = token
-        self.token_name = token_name
-        self.type = kwargs.pop('store_type', kwargs.pop('type', None))
-        self.kwargs = kwargs
-
-    def session(self):
-        # create authentication parameters
-        if self.basic_auth:
-            auth = aiohttp.BasicAuth(self.basic_auth["username"],
-                                     self.basic_auth["password"])
-        else:
-            auth = None
-
-        return aiohttp.ClientSession(
-            headers=self.headers,
-            auth=auth,
-            timeout=aiohttp.ClientTimeout(total=DEFAULT_REQUEST_TIMEOUT),
-        )
-
-    def combine_parameters(self, kwargs=None):
-        # construct GET parameters
-        params = self.params.copy()
-
-        # set the authentication token if present
-        if self.token:
-            params[self.token_name] = self.token
-
-        if kwargs and "params" in kwargs:
-            params.update(kwargs["params"])
-            del kwargs["params"]
-        return params
-
-    async def request(self,
-                      method: Text = "post",
-                      subpath: Optional[Text] = None,
-                      content_type: Optional[Text] = "application/json",
-                      **kwargs: Any
-                      ):
-        """Send a HTTP request to the endpoint.
-
-        All additional arguments will get passed through
-        to aiohttp's `session.request`."""
-
-        # create the appropriate headers
-        headers = {}
-        if content_type:
-            headers["Content-Type"] = content_type
-
-        if "headers" in kwargs:
-            headers.update(kwargs["headers"])
-            del kwargs["headers"]
-
-        url = concat_url(self.url, subpath)
-        async with self.session() as session:
-            async with session.request(
-                    method,
-                    url,
-                    headers=headers,
-                    params=self.combine_parameters(kwargs),
-                    **kwargs) as resp:
-
-                if resp.status >= 400:
-                    raise ClientResponseError(resp.status,
-                                              resp.reason,
-                                              await resp.content.read())
-                return await resp.json()
-
-    @classmethod
-    def from_dict(cls, data):
-        return EndpointConfig(**data)
-
-    def __eq__(self, other):
-        if isinstance(self, type(other)):
-            return (other.url == self.url and
-                    other.params == self.params and
-                    other.headers == self.headers and
-                    other.basic_auth == self.basic_auth and
-                    other.token == self.token and
-                    other.token_name == self.token_name)
-        else:
-            return False
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-
 # noinspection PyProtectedMember
-def set_default_subparser(parser,
-                          default_subparser):
+def set_default_subparser(parser, default_subparser):
     """default subparser selection. Call after setup, just before parse_args()
 
     parser: the name of the parser you're making changes to
     default_subparser: the name of the subparser to call by default"""
     subparser_found = False
     for arg in sys.argv[1:]:
-        if arg in ['-h', '--help']:  # global help if no subparser
+        if arg in ["-h", "--help"]:  # global help if no subparser
             break
     else:
         for x in parser._subparsers._actions:
@@ -738,25 +440,7 @@ def set_default_subparser(parser,
             sys.argv.insert(1, default_subparser)
 
 
-def enable_async_loop_debugging(event_loop: AbstractEventLoop
-                                ) -> AbstractEventLoop:
-    logging.info("Enabling coroutine debugging. "
-                 "Loop id {}".format(id(asyncio.get_event_loop())))
-
-    # Enable debugging
-    event_loop.set_debug(True)
-
-    # Make the threshold for "slow" tasks very very small for
-    # illustration. The default is 0.1 (= 100 milliseconds).
-    event_loop.slow_callback_duration = 0.001
-
-    # Report all mistakes managing asynchronous resources.
-    warnings.simplefilter('always', ResourceWarning)
-    return event_loop
-
-
-def create_task_error_logger(error_message: Text = ""
-                             ) -> Callable[[Future], None]:
+def create_task_error_logger(error_message: Text = "") -> Callable[[Future], None]:
     """Error logger to be attached to a task.
 
     This will ensure exceptions are properly logged and won't get lost."""
@@ -766,33 +450,90 @@ def create_task_error_logger(error_message: Text = ""
         try:
             fut.result()
         except Exception:
-            logger.exception("An exception was raised while running task. "
-                             "{}".format(error_message))
+            logger.exception(
+                "An exception was raised while running task. "
+                "{}".format(error_message)
+            )
 
     return handler
 
 
-class LockCounter(asyncio.Lock):
-    """Decorated asyncio lock that counts how many coroutines are waiting.
+def replace_floats_with_decimals(obj: Union[List, Dict]) -> Any:
+    """
+    Utility method to recursively walk a dictionary or list converting all `float` to `Decimal` as required by DynamoDb.
 
-    The counter can be used to discard the lock when there is no coroutine
-    waiting for it. For this to work, there should not be any execution yield
-    between retrieving the lock and acquiring it, otherwise there might be
-    race conditions."""
+    Args:
+        obj: A `List` or `Dict` object.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.wait_counter = 0
+    Returns: An object with all matching values and `float` type replaced by `Decimal`.
 
-    async def acquire(self) -> Any:
-        """Acquire the lock, makes sure only one coroutine can retrieve it."""
+    """
+    if isinstance(obj, list):
+        for i in range(len(obj)):
+            obj[i] = replace_floats_with_decimals(obj[i])
+        return obj
+    elif isinstance(obj, dict):
+        for j in obj:
+            obj[j] = replace_floats_with_decimals(obj[j])
+        return obj
+    elif isinstance(obj, float):
+        return Decimal(obj)
+    else:
+        return obj
 
-        self.wait_counter += 1
-        try:
-            return await super(LockCounter, self).acquire()
-        finally:
-            self.wait_counter -= 1
 
-    def is_someone_waiting(self) -> bool:
-        """Check if a coroutine is waiting for this lock to be freed."""
-        return self.wait_counter != 0
+def _lock_store_is_redis_lock_store(
+    lock_store: Union[EndpointConfig, LockStore, None]
+) -> bool:
+    # determine whether `lock_store` is associated with a `RedisLockStore`
+    if isinstance(lock_store, LockStore):
+        if isinstance(lock_store, RedisLockStore):
+            return True
+        return False
+
+    # `lock_store` is `None` or `EndpointConfig`
+    return lock_store is not None and lock_store.type == "redis"
+
+
+def number_of_sanic_workers(lock_store: Union[EndpointConfig, LockStore, None]) -> int:
+    """Get the number of Sanic workers to use in `app.run()`.
+
+    If the environment variable constants.ENV_SANIC_WORKERS is set and is not equal to
+    1, that value will only be permitted if the used lock store supports shared
+    resources across multiple workers (e.g. ``RedisLockStore``).
+    """
+
+    def _log_and_get_default_number_of_workers():
+        logger.debug(
+            f"Using the default number of Sanic workers ({DEFAULT_SANIC_WORKERS})."
+        )
+        return DEFAULT_SANIC_WORKERS
+
+    try:
+        env_value = int(os.environ.get(ENV_SANIC_WORKERS, DEFAULT_SANIC_WORKERS))
+    except ValueError:
+        logger.error(
+            f"Cannot convert environment variable `{ENV_SANIC_WORKERS}` "
+            f"to int ('{os.environ[ENV_SANIC_WORKERS]}')."
+        )
+        return _log_and_get_default_number_of_workers()
+
+    if env_value == DEFAULT_SANIC_WORKERS:
+        return _log_and_get_default_number_of_workers()
+
+    if env_value < 1:
+        logger.debug(
+            f"Cannot set number of Sanic workers to the desired value "
+            f"({env_value}). The number of workers must be at least 1."
+        )
+        return _log_and_get_default_number_of_workers()
+
+    if _lock_store_is_redis_lock_store(lock_store):
+        logger.debug(f"Using {env_value} Sanic workers.")
+        return env_value
+
+    logger.debug(
+        f"Unable to assign desired number of Sanic workers ({env_value}) as "
+        f"no `RedisLockStore` endpoint configuration has been found."
+    )
+    return _log_and_get_default_number_of_workers()
