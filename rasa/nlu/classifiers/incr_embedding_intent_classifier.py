@@ -110,16 +110,22 @@ class IncrementalEIC(IncrementalComponent):
         return self.EIC.persist((file_name) + "_incr", model_dir)
 
     @classmethod
-    def load(cls,
-             meta: Dict[Text, Any],
-             model_dir: Text = None,
-             model_metadata: Metadata = None,
-             cached_component: Optional['IncrementalEIC'] = None,
-             **kwargs: Any
-             ) -> 'IncrementalEIC':
+    def load(
+        cls,
+        meta: Dict[Text, Any],
+        model_dir: Text = None,
+        model_metadata: "Metadata" = None,
+        cached_component: Optional["EmbeddingIntentClassifier"] = None,
+        **kwargs: Any,
+    ) -> "EmbeddingIntentClassifier":
+
         if model_dir and meta.get("file"):
             file_name = meta.get("file")
             checkpoint = os.path.join(model_dir, file_name + ".ckpt")
+
+            with open(os.path.join(model_dir, file_name + ".tf_config.pkl"), "rb") as f:
+                _tf_config = pickle.load(f)
+
             graph = tf.Graph()
             with graph.as_default():
                 session = tf.compat.v1.Session(config=_tf_config)
@@ -157,8 +163,11 @@ class IncrementalEIC(IncrementalComponent):
                 label_embed=label_embed,
                 all_labels_embed=all_labels_embed,
             )
+
         else:
-            logger.warning("Failed to load nlu model. Maybe path {} "
-                           "doesn't exist"
-                           "".format(os.path.abspath(model_dir)))
+            logger.warning(
+                "Failed to load nlu model. Maybe path {} "
+                "doesn't exist"
+                "".format(os.path.abspath(model_dir))
+            )
             return cls(component_config=meta)
