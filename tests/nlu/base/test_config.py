@@ -1,14 +1,17 @@
+import json
 import tempfile
+from typing import Text
 
 import pytest
 
-from rasa.nlu import config, utils
-from rasa.nlu.registry import registered_pipeline_templates
+import rasa.utils.io
+from rasa.nlu import config
 from rasa.nlu.components import ComponentBuilder
+from rasa.nlu.registry import registered_pipeline_templates
 from tests.nlu.conftest import CONFIG_DEFAULTS_PATH
 from tests.nlu.utilities import write_file_config
 
-defaults = utils.read_yaml_file(CONFIG_DEFAULTS_PATH)
+defaults = rasa.utils.io.read_config_file(CONFIG_DEFAULTS_PATH)
 
 
 def test_default_config(default_config):
@@ -24,8 +27,7 @@ def test_blank_config():
 
 def test_invalid_config_json():
     file_config = """pipeline: [pretrained_embeddings_spacy"""  # invalid yaml
-    with tempfile.NamedTemporaryFile("w+",
-                                     suffix="_tmp_config_file.json") as f:
+    with tempfile.NamedTemporaryFile("w+", suffix="_tmp_config_file.json") as f:
         f.write(file_config)
         f.flush()
         with pytest.raises(config.InvalidConfigError):
@@ -40,13 +42,18 @@ def test_invalid_pipeline_template():
     assert "unknown pipeline template" in str(execinfo.value)
 
 
-def test_pipeline_looksup_registry():
-    pipeline_template = list(registered_pipeline_templates)[0]
+@pytest.mark.parametrize(
+    "pipeline_template", list(registered_pipeline_templates.keys())
+)
+def test_pipeline_registry_lookup(pipeline_template: Text):
     args = {"pipeline": pipeline_template}
     f = write_file_config(args)
     final_config = config.load(f.name)
-    components = [c.get("name") for c in final_config.pipeline]
-    assert components == registered_pipeline_templates[pipeline_template]
+    components = [c for c in final_config.pipeline]
+
+    assert json.dumps(components, sort_keys=True) == json.dumps(
+        registered_pipeline_templates[pipeline_template], sort_keys=True
+    )
 
 
 def test_default_config_file():
@@ -54,13 +61,12 @@ def test_default_config_file():
     assert len(final_config) > 1
 
 
-def test_set_attr_on_component(default_config):
+def test_set_attr_on_component():
     cfg = config.load("sample_configs/config_pretrained_embeddings_spacy.yml")
     cfg.set_component_attr(6, C=324)
 
     assert cfg.for_component(1) == {"name": "SpacyTokenizer"}
-    assert cfg.for_component(6) == {"name": "SklearnIntentClassifier",
-                                    "C": 324}
+    assert cfg.for_component(6) == {"name": "SklearnIntentClassifier", "C": 324}
 
 
 def test_override_defaults_supervised_embeddings_pipeline():
