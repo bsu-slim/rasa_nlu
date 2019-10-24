@@ -117,7 +117,7 @@ class IncrementalCVF(IncrementalComponent):
         if model_dir and meta.get("file"):
             file_name = meta.get("file")
             featurizer_file = os.path.join(model_dir, file_name)
-            return utils.pycloud_unpickle(featurizer_file)
+            return utils.json_unpickle(featurizer_file)
         else:
             logger.warning("Failed to load featurizer. Maybe path {} "
                            "doesn't exist".format(os.path.abspath(model_dir)))
