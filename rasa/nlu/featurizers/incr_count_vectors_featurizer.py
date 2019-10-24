@@ -102,7 +102,7 @@ class IncrementalCVF(IncrementalComponent):
 
         file_name = file_name + ".pkl"
         featurizer_file = os.path.join(model_dir, file_name)
-        utils.pycloud_pickle(featurizer_file, self)
+        utils.json_pickle(featurizer_file, self)
         return {"file": file_name}
 
     @classmethod

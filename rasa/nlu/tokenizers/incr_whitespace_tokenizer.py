@@ -18,6 +18,7 @@ class IncrementalWhitespaceTokenizer(Tokenizer, IncrementalComponent):
         super(IncrementalWhitespaceTokenizer, self).__init__(component_config)
         self.offset = 0
         self.tokens = []
+        self.WST = WhitespaceTokenizer()
 
     def new_utterance(self):
         self.offset = 0
@@ -27,14 +28,14 @@ class IncrementalWhitespaceTokenizer(Tokenizer, IncrementalComponent):
               **kwargs: Any) -> None:
 
         for example in training_data.training_examples:
-            example.set("tokens", WhitespaceTokenizer.tokenize(example.text))
+            example.set("tokens", self.WST.tokenize(text=example.text))
 
     def process(self, message: Message, **kwargs: Any) -> None:
         iu_list = message.get('iu_list')
         last_iu = iu_list[-1]
         iu_word, iu_type = last_iu
         if iu_type == "add":
-            token = WhitespaceTokenizer.tokenize(iu_word)
+            token = self.WST.tokenize(iu_word)
             if token:
                 token = token[0]
                 token.offset = self.offset

@@ -70,7 +70,7 @@ class EmbeddingIntentClassifier(Component):
         # how to create batches
         "batch_strategy": "balanced",  # string 'sequence' or 'balanced'
         # number of epochs
-        "epochs": 300,
+        "epochs": 10,
         # set random seed to any int to get reproducible results
         "random_seed": None,
         # embedding parameters
