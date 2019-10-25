@@ -14,6 +14,17 @@ from rasa.nlu.featurizers.count_vectors_featurizer import (
     CountVectorsFeaturizer
 )
 
+from rasa.nlu.constants import (
+    MESSAGE_RESPONSE_ATTRIBUTE,
+    MESSAGE_INTENT_ATTRIBUTE,
+    MESSAGE_TEXT_ATTRIBUTE,
+    MESSAGE_TOKENS_NAMES,
+    MESSAGE_ATTRIBUTES,
+    MESSAGE_SPACY_FEATURES_NAMES,
+    MESSAGE_VECTOR_FEATURE_NAMES,
+    SPACY_FEATURIZABLE_ATTRIBUTES,
+)
+
 
 # Restart-Incremental wrapper for the CountVectorsFeaturizer
 class IncrementalCVF(IncrementalComponent):
@@ -76,7 +87,7 @@ class IncrementalCVF(IncrementalComponent):
         last_iu = iu_list[-1]
         iu_word, iu_type = last_iu
         if iu_type == "add":
-            bag = self.CVF.vect.transform([iu_word]).toarray().squeeze()
+            bag = self.CVF.vectorizers[MESSAGE_TEXT_ATTRIBUTE].transform([iu_word]).toarray().squeeze()
             return message.set("text_features",
                                self._add_text_features(message, bag))
         elif iu_type == "revoke":
@@ -92,7 +103,7 @@ class IncrementalCVF(IncrementalComponent):
         if message.get("text_features") is not None:
             return
         else:
-            bag = self.CVF.vect.transform([word]).toarray().squeeze()
+            bag = self.CVF.vectorizers[MESSAGE_TEXT_ATTRIBUTE].transform([word]).toarray().squeeze()
             return message.set("text_features",
                                self._sub_text_features(message, bag))
 
