@@ -65,9 +65,10 @@ class IncrementalCRFEntityExtractor(EntityExtractor, IncrementalComponent):
             message.set("entities", extracted, add_to_output=True)
             self.prev_ents.append(message.get("entities"))
         elif iu_type == "revoke":
-            prev_ent = self.prev_ents.pop()
-            message.set("entities", prev_ent,
-                        add_to_output=True)
+            if len(self.prev_ents) > 0:
+                prev_ent = self.prev_ents.pop()
+                message.set("entities", prev_ent,
+                            add_to_output=True)
 
     @classmethod
     def load(cls,

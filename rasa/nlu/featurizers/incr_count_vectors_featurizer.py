@@ -3,6 +3,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Text
 import numpy as np
+import logging
 
 from rasa.nlu import utils
 from rasa.nlu.config import RasaNLUModelConfig
@@ -13,6 +14,8 @@ from rasa.nlu.components import IncrementalComponent
 from rasa.nlu.featurizers.count_vectors_featurizer import (
     CountVectorsFeaturizer
 )
+
+logger = logging.getLogger(__name__)
 
 from rasa.nlu.constants import (
     MESSAGE_RESPONSE_ATTRIBUTE,
@@ -78,8 +81,8 @@ class IncrementalCVF(IncrementalComponent):
     def _sub_text_features(self, message, to_sub):
         if message.get("text_features") is not None:
             return np.subtract(message.get("text_features"), to_sub)
-        else:
-            logger.error("Nothing in text features, cannot subtract")
+        #else:
+        #    logger.error("Nothing in text features, cannot subtract")
 
     # assuming not using spacy_doc or tokens, so just setting message.text
     def process(self, message: Message, **kwargs: Any) -> None:

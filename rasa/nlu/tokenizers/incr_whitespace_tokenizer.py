@@ -1,11 +1,14 @@
 import re
 from typing import Any, List, Text, Optional, Dict
+import logging
 
 from rasa.nlu.components import IncrementalComponent
 from rasa.nlu.config import RasaNLUModelConfig
 from rasa.nlu.tokenizers import Token, Tokenizer
 from rasa.nlu.tokenizers.whitespace_tokenizer import WhitespaceTokenizer
 from rasa.nlu.training_data import Message, TrainingData
+
+logger = logging.getLogger(__name__)
 
 
 class IncrementalWhitespaceTokenizer(Tokenizer, IncrementalComponent):
@@ -43,8 +46,9 @@ class IncrementalWhitespaceTokenizer(Tokenizer, IncrementalComponent):
                 self.offset += (token.end - token.offset + 1)
                 self.tokens.append(token)
         elif iu_type == "revoke":
-            removed = self.tokens.pop()
-            self.offset = removed.offset
+            if len(self.tokens) > 0:
+                removed = self.tokens.pop()
+                self.offset = removed.offset
         else:
             logger.error("incompatible iu type, expected 'add' or 'revoke',"
                          " got '" + iu_type + "'")

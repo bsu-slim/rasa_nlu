@@ -18,6 +18,8 @@ from rasa.nlu.classifiers.embedding_intent_classifier import (
     EmbeddingIntentClassifier
 )
 
+logger = logging.getLogger(__name__)
+
 try:
     import tensorflow as tf
 except ImportError:
@@ -44,6 +46,7 @@ class IncrementalEIC(EmbeddingIntentClassifier,IncrementalComponent):
         last_iu = iu_list[-1]
         iu_word, iu_type = last_iu
         if iu_type == "add":
+            if not hasattr(self, 'prev_intent_and_rank'): self.new_utterance() # hack
             self.prev_intent_and_rank.append({"intent": message.get("intent"),
                                               "intent_ranking": message.get("intent_ranking")})
             return super(IncrementalEIC,self).process(message, **kwargs)
@@ -55,11 +58,12 @@ class IncrementalEIC(EmbeddingIntentClassifier,IncrementalComponent):
 
     def _revoke(self, message):
         # revoke on empty should do nothing
-        if not self.prev_intent_and_rank:
+        if not hasattr(self, 'prev_intent_and_rank'):
             return
         else:
-            prev_state = self.prev_intent_and_rank.pop()
-            message.set("intent", prev_state["intent"])
-            message.set("intent_ranking", prev_state["intent_ranking"])
+            if len(self.prev_intent_and_rank) > 0:
+                prev_state = self.prev_intent_and_rank.pop()
+                message.set("intent", prev_state["intent"])
+                message.set("intent_ranking", prev_state["intent_ranking"])
 
     
