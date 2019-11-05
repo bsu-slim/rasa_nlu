@@ -245,8 +245,8 @@ class CRFEntityExtractor(EntityExtractor):
         if isinstance(tokens, list):  # tokens is a list of Token
             _start = tokens[start].offset
             _end = tokens[end].end
-            value = tokens[start].text
-            value += "".join(
+            value = tokens[start].text + ' ' # we like spaces between the tokens!!!
+            value += " ".join(
                 [
                     message.text[tokens[i - 1].end : tokens[i].offset] + tokens[i].text
                     for i in range(start + 1, end + 1)
@@ -282,7 +282,6 @@ class CRFEntityExtractor(EntityExtractor):
         # get information about the first word, tagged with `B-...`
         label, confidence = self.most_likely_entity(word_idx, entities)
         entity_label = self._entity_from_label(label)
-
         while not finished:
             label, label_confidence = self.most_likely_entity(ent_word_idx, entities)
 
@@ -342,7 +341,6 @@ class CRFEntityExtractor(EntityExtractor):
             raise Exception(
                 "Inconsistency in amount of tokens between crfsuite and message"
             )
-
         if self.component_config["BILOU_flag"]:
             return self._convert_bilou_tagging_to_entity_result(
                 message, tokens, entities
